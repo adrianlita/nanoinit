@@ -55,23 +55,38 @@ typedef struct config_message_s {
 } config_message_t;
 
 static int edJSON_callback(const edJSON_path_t *path, size_t path_size, edJSON_value_t value, void *private);
+static bool config_path_is_inside_json_object(const config_message_t *config_message, const char *path);
 
 const nanoinit_config_t *config_init(const char *filename, const char *json_object) {
+    config_free();
+
+    if(filename == 0) {
+        return &config;
+    }
+
     char *json_content = 0;
     long length = 0;
     FILE *f = fopen(filename, "rb");
     if(f) {
-        fseek(f, 0, SEEK_END);
-        length = ftell(f);
-        fseek(f, 0, SEEK_SET);
-        json_content = (char*)malloc(sizeof(char) * (length + 1));
-        if(json_content) {
-            size_t s = fread(json_content, 1, length, f);
-            (void)s;
-            json_content[length] = 0;
+        if((fseek(f, 0, SEEK_END) != 0) || ((length = ftell(f)) < 0) || (fseek(f, 0, SEEK_SET) != 0)) {
+            log_ni_error("config_init() could not read JSON file size for %s", filename);
         }
         else {
-            log_ni_error("config_init() bad memory allocation");
+            json_content = (char*)malloc(sizeof(char) * ((size_t)length + 1));
+            if(json_content) {
+                size_t s = fread(json_content, 1, (size_t)length, f);
+                if(ferror(f)) {
+                    log_ni_error("config_init() could not read JSON file %s", filename);
+                    free(json_content);
+                    json_content = 0;
+                }
+                else {
+                    json_content[s] = 0;
+                }
+            }
+            else {
+                log_ni_error("config_init() bad memory allocation");
+            }
         }
         fclose(f);
     }
@@ -100,7 +115,7 @@ const nanoinit_config_t *config_init(const char *filename, const char *json_obje
         
         //calculate json_object components
         size_t i = 0;
-        while(i < strlen(config_message.json_object)) {
+        while(i < config_message.json_object_length) {
             if(config_message.json_object[i] == '/') {
                 config_message.json_object_components++;
             }
@@ -183,6 +198,7 @@ void config_free() {
         for(int j = 0; j < config.applications[i].arg_count; j++) {
             free(config.applications[i].args[j]);
         }
+        free(config.applications[i].args);
 
         free(config.applications[i].stdout_path);
         free(config.applications[i].stderr_path);
@@ -209,21 +225,17 @@ static int edJSON_callback(const edJSON_path_t *path, size_t path_size, edJSON_v
 switch_config_message_state:
     switch(config_message->state) {
         case CONFIG_STATE_SEARCHING: {
-            if(config_message->json_object_length) {
-                if((strlen(pv) > config_message->json_object_length) && (strncmp(config_message->json_object, pv, config_message->json_object_length) == 0)) {
-                    config_message->state = CONFIG_STATE_FOUND;
-                    config_message->return_code = 0;
-                    goto switch_config_message_state;
-                }
+            if(config_path_is_inside_json_object(config_message, pv)) {
+                config_message->state = CONFIG_STATE_FOUND;
+                config_message->return_code = 0;
+                goto switch_config_message_state;
             }
         } break;
 
         case CONFIG_STATE_FOUND: {
-            if(config_message->json_object_length) {
-                if((strlen(pv) <= config_message->json_object_length) || (strncmp(config_message->json_object, pv, config_message->json_object_length) != 0)) {
-                    config_message->state = CONFIG_STATE_FINISHED;
-                    goto switch_config_message_state;
-                }
+            if(!config_path_is_inside_json_object(config_message, pv)) {
+                config_message->state = CONFIG_STATE_FINISHED;
+                goto switch_config_message_state;
             }
             
             //parse
@@ -256,12 +268,14 @@ switch_config_message_state:
                 }
 
                 config.application_count++;
-                config.applications = (nanoinit_application_config_t *)realloc(config.applications, sizeof(nanoinit_application_config_t) * config.application_count);
-                if(config.applications == 0) {
+                nanoinit_application_config_t *applications = (nanoinit_application_config_t *)realloc(config.applications, sizeof(nanoinit_application_config_t) * config.application_count);
+                if(applications == 0) {
                     log_ni_error("edJSON_callback() bad memory allocation");
+                    config.application_count--;
                     config_message->return_code = 3;
                     return 1;
                 }
+                config.applications = applications;
 
                 //init memory
                 memset(&config.applications[config.application_count - 1], 0, sizeof(nanoinit_application_config_t));
@@ -316,17 +330,19 @@ switch_config_message_state:
                 }
 
                 //set path
-                config.applications[config.application_count - 1].path = strdup(current_value);
-                if(config.applications[config.application_count - 1].path == 0) {
+                char *path_copy = strdup(current_value);
+                if(path_copy == 0) {
                     log_ni_error("edJSON_callback() bad memory allocation");
                     config_message->return_code = 3;
                     return 1;
                 }
+                free(config.applications[config.application_count - 1].path);
+                config.applications[config.application_count - 1].path = path_copy;
             }
 
             //if component is args
             else if(strcmp(current_value, "args") == 0) {
-                if(path[component].index >= 0) {
+                if((component < path_size) && (path[component].index >= 0)) {
                     component++;
                 }
 
@@ -350,12 +366,14 @@ switch_config_message_state:
 
                 //add argument
                 config.applications[config.application_count - 1].arg_count++;
-                config.applications[config.application_count - 1].args = (char **)realloc(config.applications[config.application_count - 1].args, sizeof(char *) * config.applications[config.application_count - 1].arg_count);
-                if(config.applications[config.application_count - 1].args == 0) {
+                char **args = (char **)realloc(config.applications[config.application_count - 1].args, sizeof(char *) * config.applications[config.application_count - 1].arg_count);
+                if(args == 0) {
                     log_ni_error("edJSON_callback() bad memory allocation");
+                    config.applications[config.application_count - 1].arg_count--;
                     config_message->return_code = 3;
                     return 1;
                 }
+                config.applications[config.application_count - 1].args = args;
 
                 config.applications[config.application_count - 1].args[config.applications[config.application_count - 1].arg_count - 1] = strdup(current_value);
                 if(config.applications[config.application_count - 1].args[config.applications[config.application_count - 1].arg_count - 1] == 0) {
@@ -422,12 +440,14 @@ switch_config_message_state:
                 }
 
                 //set stdout_path
-                config.applications[config.application_count - 1].stdout_path = strdup(current_value);
-                if(config.applications[config.application_count - 1].stdout_path == 0) {
+                char *stdout_path = strdup(current_value);
+                if(stdout_path == 0) {
                     log_ni_error("edJSON_callback() bad memory allocation");
                     config_message->return_code = 3;
                     return 1;
                 }
+                free(config.applications[config.application_count - 1].stdout_path);
+                config.applications[config.application_count - 1].stdout_path = stdout_path;
             }
 
             //if component is stderr
@@ -451,12 +471,14 @@ switch_config_message_state:
                 }
 
                 //set stderr_path
-                config.applications[config.application_count - 1].stderr_path = strdup(current_value);
-                if(config.applications[config.application_count - 1].stderr_path == 0) {
+                char *stderr_path = strdup(current_value);
+                if(stderr_path == 0) {
                     log_ni_error("edJSON_callback() bad memory allocation");
                     config_message->return_code = 3;
                     return 1;
                 }
+                free(config.applications[config.application_count - 1].stderr_path);
+                config.applications[config.application_count - 1].stderr_path = stderr_path;
             }
 
             //if component is anything lese
@@ -476,4 +498,14 @@ switch_config_message_state:
     }
 
     return 0;
+}
+
+static bool config_path_is_inside_json_object(const config_message_t *config_message, const char *path) {
+    if(config_message->json_object_length == 0) {
+        return true;
+    }
+
+    return (strlen(path) > config_message->json_object_length)
+        && (strncmp(config_message->json_object, path, config_message->json_object_length) == 0)
+        && (path[config_message->json_object_length] == '/');
 }

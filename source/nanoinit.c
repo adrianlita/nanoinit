@@ -41,11 +41,13 @@ void nanoinit_send_reload() {
     pid_t pid = get_nanoinit_pid();
     if(pid < 0) {
         log_ni_error("nanoinit_send_reload() could not get nanoinit PID");
+        exit(1);
     }
 
     int result = kill(pid, SIGUSR1);
     if(result != 0) {
         log_ni_error("nanoinit_send_reload() could not send signal to nanoinit");
+        exit(1);
     }
 
     exit(0);
@@ -60,10 +62,11 @@ static pid_t get_nanoinit_pid() {
     DIR *dir = opendir("/proc");
     if(dir == 0) {
         log_ni_error("get_nanoinit_pid() could not open /proc");
+        return -1;
     }
 
     while((files = readdir(dir)) != 0) {
-        if(files->d_type == 4) {
+        if((files->d_type == DT_DIR) || (files->d_type == DT_UNKNOWN)) {
             int cpid = 0;
             int i = 0;
             while(files->d_name[i]) {
@@ -82,9 +85,9 @@ static pid_t get_nanoinit_pid() {
                 if((pid_t)cpid != mypid) {
                     char *procfname;
                     int a = asprintf(&procfname, "/proc/%d/cmdline", cpid);
-                    (void)a;
-                    if(procfname == 0) {
+                    if((a < 0) || (procfname == 0)) {
                         log_ni_error("get_nanoinit_pid() failed memory allocation");
+                        closedir(dir);
                         return -1;
                     }
 
@@ -93,9 +96,10 @@ static pid_t get_nanoinit_pid() {
                     if(f) {
                         size_t size;
                         char buffer[4096];
-                        size = fread(buffer, sizeof(char), 4096, f);
+                        size = fread(buffer, sizeof(char), sizeof(buffer) - 1, f);
                         fclose(f);
 
+                        buffer[size] = 0;
                         log("%s", buffer);
 
                         if(size) {

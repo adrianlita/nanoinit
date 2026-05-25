@@ -114,6 +114,10 @@ static error_t argp_parse_cb(int key, char *arg, struct argp_state *state) {
                 return ARGP_ERR_UNKNOWN;
             }
 
+            if(iter_arguments->log_path) {
+                free(iter_arguments->log_path);
+                iter_arguments->log_path = 0;
+            }
             iter_arguments->log_path = strdup(arg);
             if(iter_arguments->log_path == 0) {
                 return ARGP_ERR_UNKNOWN;
@@ -131,6 +135,10 @@ static error_t argp_parse_cb(int key, char *arg, struct argp_state *state) {
         case 'v':
             if(arg == 0) {
                 return ARGP_ERR_UNKNOWN;
+            }
+
+            if(arg[1] != 0) {
+                argp_usage(state);
             }
 
             iter_arguments->verbosity_level  = arg[0] - '0';

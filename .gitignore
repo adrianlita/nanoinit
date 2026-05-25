@@ -54,3 +54,6 @@ dkms.conf
 build/
 deploy/release
 nanoinit
+
+.vscode/
+.idea/

@@ -1,206 +1,719 @@
 # nanoinit
-Linux based, Docker-aimed supervisor with very low memory footprint and full control of targeted applications.
 
-nanoinit is a dependency-free, very lightweight supervisor application (daemon) especially crafted for using inside Docker containers.
-## Features
-Disk size:
-- for **Ubuntu Linux**: ~41KB
-- for **Alpine Linux**: ~66KB
+`nanoinit` is a small Linux process supervisor designed for Docker containers.
+It starts one or more configured applications, keeps selected applications alive
+with optional autorestart, forwards termination signals, and can reload its
+configuration while the container is running.
 
-RAM size:
-- as little as possible, dependent on the number of apps in the config file; usually **does not exceed a few KB**.
+The project is intentionally small: configuration is JSON, application startup is
+done with `fork()` and `execv()`, and there are no runtime service-manager
+dependencies.
 
-### Main features
-- JSON configuration via the **-c** argument; see [arguments](#arguments) for more information
-- non-dedicated JSON configuration via the **-j** argument; see [arguments](#arguments) for more information
-- save logs to your desired path; see [config file](#config) for more information
-- add any number of apps to supervise, with any combination of parameters; see [config file](#config) for more information
-- redirect stdout and/or stderr of your applications to specific locations; see [config file](#config) for more information
-- autorestart failed apps; see [config file](#config) for more information
-- manual mode for specific apps; [arguments](#arguments) and [config file](#config) for more information
+## Contents
 
-### Manual mode
-Applications marked as manual in the config file won't be ran (whole entry is ignored) if nanoinit runs in manual mode. Running nanoinit in manual mode can be done either by using the **-m** argument (see [arguments](#arguments)) or by setting the **NANOINIT_MANUAL_MODE** environment variable to anything non-null (see [environment variables](#envvars)).
+- [What nanoinit does](#what-nanoinit-does)
+- [Quick start](#quick-start)
+- [Building](#building)
+- [Using nanoinit in Docker](#using-nanoinit-in-docker)
+- [Command-line arguments](#command-line-arguments)
+- [Environment variables](#environment-variables)
+- [Configuration file](#configuration-file)
+- [Manual mode](#manual-mode)
+- [Logging and output redirection](#logging-and-output-redirection)
+- [Signals and reloads](#signals-and-reloads)
+- [Examples](#examples)
+- [Troubleshooting](#troubleshooting)
+- [Project layout](#project-layout)
 
-Manual mode has advantages when debugging applications and wanting to manually run them inside the container.
+## What nanoinit does
 
-The preffered method of activating manual mode is through environment variables, since custom env vars can be specified directly to Docker when running an image.
+`nanoinit` is meant to be the main process of a container. It reads a JSON
+configuration file, starts each configured application, and then waits for child
+processes and signals.
 
-### stdout / stderr redirection
-stdout and stderr redirection can be configured for each application through the [config file](#config).
+It is useful when a container needs a tiny supervisor instead of a shell script or
+a full init system. Typical use cases include:
 
-## Requirements
-- for **Ubuntu Linux**: none
-- for **Alpine Linux**: argp-standalone
+- starting multiple long-running processes in one container
+- redirecting each process' `stdout` and `stderr`
+- automatically restarting selected processes when they exit
+- disabling selected processes during debugging with manual mode
+- reloading the configuration without replacing the container
 
-## Install
-Add the following directive to your Dockerfile:
-```
-COPY nanoinit /path/to/nanoinit
-```
+`nanoinit` is not a general-purpose service manager. It does not implement
+dependency ordering, health checks, privilege switching, environment files, start
+limits, backoff policies, or per-application control commands.
 
-## Usage
-Add the following command at the end of your Dockerfile:
-```
-CMD ["/path/to/nanoinit", "--config-file=/path/to/config.json", "--config-json-object=/nanoinit-settings", "--log-path=/path/to/save/logs"]
+## Quick start
 
-which is the same as
+Create a config file:
 
-CMD ["/path/to/nanoinit", "-c/path/to/config.json", "-j/nanoinit-settings", "-l/path/to/save/logs"]
-```
-
-See [arguments](#arguments), [config file](#config) and [environment variables](#envvars) below for more information.
-## Arguments
-Arguments are passed to the nanoinit binary when it is ran.
-
-**Note:** [environment variables](#envvars) **superseed** arguments when there's a conflict.
-
-### -c, --config-file=/path/to/config.json
-Specifies the configuration JSON file.
-
-If argument is not specified, default value is null, which means:
-- no configuration is loaded/available
-- no apps will be run, but nanoinit will sleep for infinity and wait for a kill signal
-
-### -j, --config-json-object=nanoinit-settings
-Specifies the parent JSON object.
-
-Default value is null, which means that it will look directly into the root of the JSON file.
-
-The JSON object must be specified as a path. For example:
-- **/nanoinit-rules** if the configuration object is in the root of the JSON, under the "nanoinit-rules" object.
-- **/config/nanoinit** if the configuration object is inside the "config" object, which is in the root of the JSON file.
-
-### -l, --log-path=/path/to/log.txt
-Specified the path for writing log-files.
-
-Default only uses stderr and stdout for logging. When specified, stdout and stderr are still outputed, but the output is also written to a certain file (stdout and stderr combined).
-
-### -m, --manual-mode
-Enable manual mode. 
-
-Default is manual-mode disabled.
-
-This option is recommended to be set via the NANOINIT_MANUAL_MODE environment variable, as it is more useful that way.
-
-### -r, --reload
-Looks for top nanoinit process and sends a SIGSUSR1 signal to it, forcing it to terminate all apps, reload config and restart apps.
-
-### -v, --verbose=0-2
-Specified application print verbosity level.
-
-Values are 0(nanoinit ERR), 1(application ERR), 2(LOG), and default value is 0.
-
-## Config file
-Configuration file is in JSON format, parsed by the [edJSON library](https://github.com/AXIPlus/edJSON). This way, JSON parsing is very lightweight, highly efficient, and **JSON comments** are enabled.
-
-The complete set of parameters for one application:
-```
-"application_name": {
-    "path": "/path/to/app_binary",
-    "args": ["-a", "-b"],
-    "autorestart": true,
-    "manual": false,
-    "stdout": "log/program1-stdout.log",
-    "stderr": "log/program1-stderr.log"
-},
-```
-All paths are relative to **nanoinit**'s working directory.
-
-Parameters:
-- **path** - specified the path to the application to be ran
-- **args** - arguments to be passed to the application; can be a string if only one argument is present, or an array of arguments for multiple arguments; setting more than one argument in one string may lead to undefined behaviour;
-- **autorestart** - whether to restart the app automatically when it exists or not; default value is **false**;
-- **manual** - whether the application is marked as manual or not; default value is **false**;
-- **stdout** and **stderr** - used to redirect app's output streams stdout and stderr; default value is **unset**
-    - when **unset**, nanoinit does not redirect the stream, which are outputted
-    - when set to **/a/path/on/disk** the stream is redirected to the specified path
-    - when set to **empty** ("") the stream is redirected to /dev/null
-
-Besides **path**, all other parameters are optional.
-
-### Config file examples
-Below is an example config.json file when the file is dedicated to nanoinit (JSON object is **not set**):
-```
+```json
 {
-    "program1": {
-        "path": "/path/to/program1",
-        "args": ["-a", "-b"],
-        "autorestart": true,
-        "stdout": "log/program1-stdout.log",
-        "stderr": "log/program1-stderr.log"
+    "web": {
+        "path": "/usr/local/bin/web-server",
+        "args": ["--host", "0.0.0.0", "--port", "8080"],
+        "autorestart": true
     },
-
-    "program2": {
-        "path": "/path/to/program2",
-        "args": ["-p/a/path", "--path=/another/path"],
+    "worker": {
+        "path": "/usr/local/bin/worker",
+        "args": "--foreground",
         "manual": true
-    },
-
-    "program3": {
-        "path": "/path/to/program3",
-        "args": ["-p/a/path", "--path=/another/path"],
-        "stdout": "",
-        "stderr": ""
-    },
-
-    "program4": {
-        "path": "/path/to/program3",
-        "args": "-ahl"
     }
 }
 ```
 
-Below is an example config.json when the file is shared with other applications (JSON object is **'/nanoinit-rules'**):
+Run `nanoinit` with that file:
+
+```sh
+./nanoinit --config-file=/etc/nanoinit/config.json --verbose=2
 ```
-{
-    "nanoinit-rules": {
-        "program1": {
-            "path": "/path/to/program1",
-            "args": ["-a", "-b"],
-            "autorestart": true,
-            "stdout": "log/program1-stdout.log",
-            "stderr": "log/program1-stderr.log"
-        },
 
-        "program2": {
-            "path": "/path/to/program2",
-            "args": ["-p/a/path", "--path=/another/path"],
-            "manual": true
-        },
+In normal mode, both `web` and `worker` are started. In manual mode, `web` is
+started but `worker` is skipped because it is marked with `"manual": true`:
 
-        "program3": {
-            "path": "/path/to/program3",
-            "args": ["-p/a/path", "--path=/another/path"],
-            "stdout": "",
-            "stderr": ""
-        },
-
-        "program4": {
-            "path": "/path/to/program3",
-            "args": "-ahl"
-        }
-    },
-
-    //below, any other objects are ignored by nanoinit
-    "other": {
-
-    },
-
-    "other2": {
-
-    }
-}
+```sh
+NANOINIT_MANUAL_MODE=1 ./nanoinit --config-file=/etc/nanoinit/config.json
 ```
+
+## Building
+
+Build from the `source` directory:
+
+```sh
+make -C source
+```
+
+The resulting binary is written to the repository root:
+
+```sh
+./nanoinit
+```
+
+Build a debug binary:
+
+```sh
+debugEnable=true make -C source
+```
+
+Clean generated build output:
+
+```sh
+make -C source clean
+```
+
+### Build requirements
+
+Ubuntu:
+
+- `gcc`
+- `make`
+- standard libc development files
+
+Alpine:
+
+- `gcc`
+- `g++`
+- `make`
+- `argp-standalone`
+
+The Alpine build must link with `-largp`. The provided Alpine builder Dockerfile
+patches the Makefile for that case.
+
+### Builder images
+
+The repository includes builder Dockerfiles:
+
+```sh
+docker build -f deploy/Dockerfile.ubuntu -t nanoinit-builder-ubuntu .
+docker run --rm -v "$PWD/deploy/release:/opt/release" nanoinit-builder-ubuntu
+```
+
+```sh
+docker build -f deploy/Dockerfile.alpine -t nanoinit-builder-alpine .
+docker run --rm -v "$PWD/deploy/release:/opt/release" nanoinit-builder-alpine
+```
+
+Each builder copies the compiled `nanoinit` binary to `/opt/release/nanoinit` in
+the mounted release directory.
+
+## Using nanoinit in Docker
+
+Copy the binary and a config file into your image:
+
+```dockerfile
+COPY nanoinit /usr/local/bin/nanoinit
+COPY config.json /etc/nanoinit/config.json
+
+CMD ["/usr/local/bin/nanoinit", "--config-file=/etc/nanoinit/config.json"]
+```
+
+For a config embedded under a parent object:
+
+```dockerfile
+CMD [
+    "/usr/local/bin/nanoinit",
+    "--config-file=/etc/app/config.json",
+    "--config-json-object=/nanoinit"
+]
+```
+
+For debugging, enable manual mode at container runtime:
+
+```sh
+docker run --rm -e NANOINIT_MANUAL_MODE=1 your-image
+```
+
+This is usually more practical than baking `--manual-mode` into the Dockerfile,
+because you can turn manual mode on only for debug runs.
+
+## Command-line arguments
+
+### `-c`, `--config-file=/path/to/config.json`
+
+Path to the JSON configuration file.
+
+If this argument is omitted, no configuration is loaded. `nanoinit` starts no
+applications and remains running until it receives a stop signal. This is useful
+for keeping a container alive while debugging its filesystem or environment.
+
+### `-j`, `--config-json-object=/path/in/json`
+
+Path to the parent JSON object that contains the nanoinit application
+configuration.
+
+If omitted, the root object of the JSON file is treated as the nanoinit
+configuration. Use this option when the JSON file is shared with another
+application and nanoinit should read only one nested object.
+
+Examples:
+
+- `/nanoinit`
+- `/config/nanoinit`
+- `/services/supervisor`
+
+Use slash-separated object names. A leading slash is recommended and is the
+format used throughout the examples.
+
+### `-l`, `--log-path=/path/to/log.txt`
+
+Writes nanoinit logs to the specified file in addition to normal terminal output.
+
+The log file receives nanoinit's log entries. Terminal output is filtered by the
+selected verbosity level. `--log-path` is not the same as per-application
+`stdout` or `stderr` redirection, which is configured per app in the JSON file.
+
+### `-m`, `--manual-mode`
+
+Enables manual mode. See [Manual mode](#manual-mode).
+
+### `-r`, `--reload`
+
+Finds a running `nanoinit` process and sends it `SIGUSR1`. The running supervisor
+then terminates its supervised applications, reloads the config file, and starts
+applications from the new config.
+
+This command is intended to be executed from the same container or host namespace
+where the target `nanoinit` process is visible in `/proc`.
+
+### `-v`, `--verbose=0-2`
+
+Controls terminal logging verbosity.
+
+- `0`: nanoinit errors only
+- `1`: nanoinit errors and application errors
+- `2`: verbose logs
+
+Default: `0`.
 
 ## Environment variables
-Enviroment variables can be specified via Docker run command to change the behaviour of nanoinit on the go:
 
-- **NANOINIT_MANUAL_MODE**: sets manual mode (for app-debugging purposes)
-- **NANOINIT_CONFIG_FILE**: sets config file, if a different config file than the one specified in the Dockerfile needs to be used (for app-debugging purposes)
-- **NANOINIT_CONFIG_JSON_OBJECT**: sets the config object, if a different config object than the one specified in the Dockerfile is used (for app-debugging purposes)
+Environment variables are useful in Docker because they can be supplied at
+runtime without changing the image.
 
+### `NANOINIT_MANUAL_MODE`
 
-## Release notes
-### version 1.0.0
-- initial release
+Enables manual mode when set to any value.
+
+Examples:
+
+```sh
+NANOINIT_MANUAL_MODE=1 ./nanoinit -c config.json
+```
+
+```sh
+docker run -e NANOINIT_MANUAL_MODE=1 your-image
+```
+
+Only presence is checked. The actual value is not parsed as a boolean.
+
+### `NANOINIT_CONFIG_FILE`
+
+Overrides `--config-file`.
+
+```sh
+NANOINIT_CONFIG_FILE=/tmp/debug-config.json ./nanoinit -c /etc/nanoinit/config.json
+```
+
+In this example, `/tmp/debug-config.json` is used.
+
+### `NANOINIT_CONFIG_JSON_OBJECT`
+
+Overrides `--config-json-object`.
+
+```sh
+NANOINIT_CONFIG_JSON_OBJECT=/debug/nanoinit ./nanoinit -j /production/nanoinit
+```
+
+In this example, `/debug/nanoinit` is used.
+
+## Configuration file
+
+The configuration file is JSON parsed by the bundled `edJSON` parser. JSON
+comments are supported.
+
+At the selected configuration object, every property name is treated as an
+application name. Each application value must be an object.
+
+Minimal config:
+
+```json
+{
+    "app": {
+        "path": "/usr/local/bin/app"
+    }
+}
+```
+
+Full application entry:
+
+```json
+{
+    "app": {
+        "path": "/usr/local/bin/app",
+        "args": ["--listen", "0.0.0.0:8080"],
+        "autorestart": true,
+        "manual": false,
+        "stdout": "/var/log/app.stdout.log",
+        "stderr": "/var/log/app.stderr.log"
+    }
+}
+```
+
+### Application fields
+
+`path`
+
+Required. Path to the executable passed to `execv()`.
+
+The path may be absolute or relative. Relative paths are resolved relative to the
+current working directory of the `nanoinit` process.
+
+`args`
+
+Optional. Arguments passed to the application.
+
+Use a string for exactly one argument:
+
+```json
+{
+    "worker": {
+        "path": "/usr/local/bin/worker",
+        "args": "--foreground"
+    }
+}
+```
+
+Use an array for multiple arguments:
+
+```json
+{
+    "web": {
+        "path": "/usr/local/bin/web",
+        "args": ["--host", "0.0.0.0", "--port", "8080"]
+    }
+}
+```
+
+Do not combine multiple command-line arguments into one string. `nanoinit` does
+not run a shell and does not split strings on spaces.
+
+`autorestart`
+
+Optional boolean. Default: `false`.
+
+When `true`, `nanoinit` starts the application again after it exits. This applies
+to both clean and failing exits.
+
+There is currently no restart delay, maximum retry count, or backoff policy.
+
+`manual`
+
+Optional boolean. Default: `false`.
+
+When `true`, the application is skipped if nanoinit is running in manual mode.
+In normal mode, the application starts like any other configured application.
+
+`stdout`
+
+Optional string. Redirects the application's standard output.
+
+- omitted: inherit nanoinit's `stdout`
+- non-empty string: write `stdout` to that path
+- empty string `""`: redirect `stdout` to `/dev/null`
+
+`stderr`
+
+Optional string. Redirects the application's standard error.
+
+- omitted: inherit nanoinit's `stderr`
+- non-empty string: write `stderr` to that path
+- empty string `""`: redirect `stderr` to `/dev/null`
+
+### Dedicated config file
+
+If the whole file belongs to nanoinit, omit `--config-json-object`:
+
+```json
+{
+    "api": {
+        "path": "/usr/local/bin/api",
+        "args": ["--config", "/etc/api/config.json"],
+        "autorestart": true,
+        "stdout": "/var/log/api.stdout.log",
+        "stderr": "/var/log/api.stderr.log"
+    },
+    "debug-shell-helper": {
+        "path": "/usr/local/bin/debug-helper",
+        "manual": true
+    }
+}
+```
+
+Run it:
+
+```sh
+nanoinit --config-file=/etc/nanoinit/config.json
+```
+
+### Shared config file
+
+If nanoinit config is nested inside a larger JSON file, use
+`--config-json-object`:
+
+```json
+{
+    "app": {
+        "name": "example"
+    },
+    "nanoinit": {
+        "api": {
+            "path": "/usr/local/bin/api",
+            "autorestart": true
+        },
+        "worker": {
+            "path": "/usr/local/bin/worker",
+            "args": ["--queue", "default"]
+        }
+    }
+}
+```
+
+Run it:
+
+```sh
+nanoinit --config-file=/etc/app/config.json --config-json-object=/nanoinit
+```
+
+Only entries under `/nanoinit` are interpreted as supervised applications.
+
+## Manual mode
+
+Manual mode is designed for debugging.
+
+Sometimes a container normally starts several applications, but during debugging
+you want one of them to stay stopped so you can run it by hand with different
+arguments, under a debugger, or from an interactive shell. Mark that application
+as manual:
+
+```json
+{
+    "api": {
+        "path": "/usr/local/bin/api",
+        "autorestart": true
+    },
+    "worker": {
+        "path": "/usr/local/bin/worker",
+        "manual": true
+    }
+}
+```
+
+Normal run:
+
+```sh
+nanoinit -c config.json
+```
+
+Result:
+
+- `api` starts
+- `worker` starts
+
+Manual-mode run:
+
+```sh
+NANOINIT_MANUAL_MODE=1 nanoinit -c config.json
+```
+
+Result:
+
+- `api` starts
+- `worker` is skipped
+
+Manual mode does not start an interactive shell and does not change the config
+file. It only filters out applications marked with `"manual": true`.
+
+## Logging and output redirection
+
+There are two kinds of output to consider:
+
+- nanoinit's own logs
+- each supervised application's `stdout` and `stderr`
+
+Use `--verbose` to control how much nanoinit prints to the terminal. Use
+`--log-path` to also write nanoinit's own logs to a file.
+
+Use `stdout` and `stderr` in the config file to redirect application streams.
+Relative output paths are resolved relative to nanoinit's current working
+directory.
+
+Example:
+
+```json
+{
+    "api": {
+        "path": "/usr/local/bin/api",
+        "stdout": "/var/log/api.stdout.log",
+        "stderr": "/var/log/api.stderr.log"
+    },
+    "worker": {
+        "path": "/usr/local/bin/worker",
+        "stdout": "",
+        "stderr": ""
+    }
+}
+```
+
+In this example:
+
+- `api` writes its output to files
+- `worker` output is discarded through `/dev/null`
+- nanoinit's own logs still follow `--verbose` and `--log-path`
+
+## Signals and reloads
+
+`nanoinit` registers handlers for:
+
+- `SIGTERM`
+- `SIGINT`
+- `SIGQUIT`
+- `SIGUSR1`
+
+When it receives `SIGTERM`, `SIGINT`, or `SIGQUIT`, it forwards that signal to
+all currently running supervised applications and waits for them to exit.
+
+When it receives `SIGUSR1`, it performs a reload:
+
+1. Forward `SIGTERM` to running supervised applications.
+2. Wait for those applications to exit.
+3. Free the current configuration.
+4. Read the configuration file again.
+5. Start applications from the new configuration.
+
+You can trigger reload by sending `SIGUSR1` directly:
+
+```sh
+kill -USR1 <nanoinit-pid>
+```
+
+Or by using the helper mode:
+
+```sh
+nanoinit --reload
+```
+
+The helper mode searches `/proc` for a different process whose command line
+contains `nanoinit`, then sends `SIGUSR1` to it.
+
+## Examples
+
+### Keep a container alive with no apps
+
+```sh
+nanoinit
+```
+
+No config file is loaded, no applications are started, and nanoinit waits for a
+stop signal.
+
+### Run two apps
+
+```json
+{
+    "api": {
+        "path": "/usr/local/bin/api",
+        "args": ["--listen", "0.0.0.0:8080"],
+        "autorestart": true
+    },
+    "worker": {
+        "path": "/usr/local/bin/worker",
+        "args": ["--queue", "default"],
+        "autorestart": true
+    }
+}
+```
+
+```sh
+nanoinit -c config.json -v2
+```
+
+### Debug one app manually
+
+```json
+{
+    "api": {
+        "path": "/usr/local/bin/api",
+        "autorestart": true
+    },
+    "worker": {
+        "path": "/usr/local/bin/worker",
+        "manual": true
+    }
+}
+```
+
+```sh
+docker run --rm -it -e NANOINIT_MANUAL_MODE=1 your-image
+```
+
+Inside the container, run the worker yourself:
+
+```sh
+/usr/local/bin/worker --queue default --debug
+```
+
+### Override config at runtime
+
+```sh
+docker run --rm \
+    -e NANOINIT_CONFIG_FILE=/tmp/debug-config.json \
+    -v "$PWD/debug-config.json:/tmp/debug-config.json:ro" \
+    your-image
+```
+
+## Troubleshooting
+
+### Nothing starts
+
+Check that:
+
+- `--config-file` points to an existing file
+- `--config-json-object` points to the object that contains app entries
+- every app has a `path`
+- `path` is correct from inside the container
+- executable permissions are set on each binary
+- verbosity is high enough to show useful logs: `--verbose=2`
+
+### Arguments are not split
+
+`nanoinit` does not invoke a shell. This means:
+
+```json
+"args": "--host 0.0.0.0 --port 8080"
+```
+
+is one argument, not four.
+
+Use an array:
+
+```json
+"args": ["--host", "0.0.0.0", "--port", "8080"]
+```
+
+### A manual app still starts
+
+Manual mode must be enabled globally and the app must be marked manual.
+
+The app entry needs:
+
+```json
+"manual": true
+```
+
+The nanoinit process needs either:
+
+```sh
+nanoinit --manual-mode -c config.json
+```
+
+or:
+
+```sh
+NANOINIT_MANUAL_MODE=1 nanoinit -c config.json
+```
+
+### Output files are not created
+
+Check that the parent directory exists and that the process user can write to it.
+`nanoinit` opens configured output files directly; it does not create missing
+parent directories.
+
+### Reload does not work
+
+Make sure the target nanoinit process is visible in `/proc` from where
+`nanoinit --reload` is executed. In containers, PID namespaces can hide the
+target process.
+
+You can also send the signal directly if you know the PID:
+
+```sh
+kill -USR1 <nanoinit-pid>
+```
+
+## Project layout
+
+```text
+.
+|-- README.md
+|-- TODO.md
+|-- build-releases.sh
+|-- deploy/
+|   |-- Dockerfile.alpine
+|   `-- Dockerfile.ubuntu
+|-- source/
+|   |-- arguments.c
+|   |-- config.c
+|   |-- log.c
+|   |-- main.c
+|   |-- nanoinit.c
+|   |-- supervisor.c
+|   `-- edJSON/
+`-- test/
+    |-- config1.json
+    |-- config2.json
+    |-- config3.json
+    `-- config4.json
+```
+
+Important source files:
+
+- `source/arguments.c`: command-line arguments and environment overrides
+- `source/config.c`: JSON parsing and config validation
+- `source/supervisor.c`: process spawning, supervision, manual mode, signals
+- `source/nanoinit.c`: reload helper
+- `source/log.c`: nanoinit logging
+
+## License
+
+MIT. See [LICENSE](LICENSE).
