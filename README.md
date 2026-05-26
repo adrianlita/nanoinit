@@ -15,6 +15,7 @@ dependencies.
 - [Quick start](#quick-start)
 - [Building](#building)
 - [Testing](#testing)
+- [Continuous integration and releases](#continuous-integration-and-releases)
 - [Using nanoinit in Docker](#using-nanoinit-in-docker)
 - [Command-line arguments](#command-line-arguments)
 - [Environment variables](#environment-variables)
@@ -152,6 +153,26 @@ configs, then verify the supervisor behavior through the compiled binary. Each
 feature test lives in its own file under `test/`. The suite covers config
 parsing, arguments, environment overrides, manual mode, output redirection,
 autorestart, reloads, `--log-path`, and application log rotation.
+
+## Continuous integration and releases
+
+GitHub Actions workflows live under `.github/workflows/`.
+
+`CI` runs on every push, on pull requests, and when started manually from the
+Actions tab. It runs the Python unittest suite:
+
+```sh
+python3 -m unittest discover -s test -p 'test_*.py'
+```
+
+`Release` runs when a tag matching `v*` is pushed and can also be started
+manually. It runs the test suite, builds release binaries with the Ubuntu and
+Alpine Docker builder images, produces `nanoinit-ubuntu`, `nanoinit-alpine`,
+and `SHA256SUMS`, then uploads them as workflow artifacts.
+
+When the release workflow is triggered by a `v*` tag push, it also creates a
+GitHub Release for that tag and attaches the same assets. Manual runs from a
+branch build the assets without publishing a GitHub Release.
 
 ## Using nanoinit in Docker
 
@@ -776,6 +797,8 @@ kill -USR1 <nanoinit-pid>
 
 ```text
 .
+|-- .github/
+|   `-- workflows/
 |-- README.md
 |-- TODO.md
 |-- build-releases.sh
