@@ -38,6 +38,11 @@ typedef struct nanoinit_application_config_s {
 
     char *stdout_path;
     char *stderr_path;
+
+    int stdout_rotate_size;
+    int stdout_rotate_count;
+    int stderr_rotate_size;
+    int stderr_rotate_count;
 } nanoinit_application_config_t;
 
 typedef struct nanoinit_config_s {

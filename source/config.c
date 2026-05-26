@@ -56,6 +56,7 @@ typedef struct config_message_s {
 
 static int edJSON_callback(const edJSON_path_t *path, size_t path_size, edJSON_value_t value, void *private);
 static bool config_path_is_inside_json_object(const config_message_t *config_message, const char *path);
+static int config_set_non_negative_integer(config_message_t *config_message, edJSON_value_t value, int *destination, const char *field_name, const char *app_name);
 
 const nanoinit_config_t *config_init(const char *filename, const char *json_object) {
     config_free();
@@ -279,6 +280,8 @@ switch_config_message_state:
 
                 //init memory
                 memset(&config.applications[config.application_count - 1], 0, sizeof(nanoinit_application_config_t));
+                config.applications[config.application_count - 1].stdout_rotate_count = 1;
+                config.applications[config.application_count - 1].stderr_rotate_count = 1;
 
                 //set name
                 config.applications[config.application_count - 1].name = strdup(current_value);
@@ -481,6 +484,58 @@ switch_config_message_state:
                 config.applications[config.application_count - 1].stderr_path = stderr_path;
             }
 
+            //if component is stdout_rotate_size
+            else if(strcmp(current_value, "stdout_rotate_size") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() stdout_rotate_size should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(config_set_non_negative_integer(config_message, value, &config.applications[config.application_count - 1].stdout_rotate_size, "stdout_rotate_size", config.applications[config.application_count - 1].name) != 0) {
+                    return 1;
+                }
+            }
+
+            //if component is stdout_rotate_count
+            else if(strcmp(current_value, "stdout_rotate_count") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() stdout_rotate_count should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(config_set_non_negative_integer(config_message, value, &config.applications[config.application_count - 1].stdout_rotate_count, "stdout_rotate_count", config.applications[config.application_count - 1].name) != 0) {
+                    return 1;
+                }
+            }
+
+            //if component is stderr_rotate_size
+            else if(strcmp(current_value, "stderr_rotate_size") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() stderr_rotate_size should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(config_set_non_negative_integer(config_message, value, &config.applications[config.application_count - 1].stderr_rotate_size, "stderr_rotate_size", config.applications[config.application_count - 1].name) != 0) {
+                    return 1;
+                }
+            }
+
+            //if component is stderr_rotate_count
+            else if(strcmp(current_value, "stderr_rotate_count") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() stderr_rotate_count should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(config_set_non_negative_integer(config_message, value, &config.applications[config.application_count - 1].stderr_rotate_count, "stderr_rotate_count", config.applications[config.application_count - 1].name) != 0) {
+                    return 1;
+                }
+            }
+
             //if component is anything lese
             else {
                 config_message->return_code = 2;    //invalid parameter
@@ -508,4 +563,21 @@ static bool config_path_is_inside_json_object(const config_message_t *config_mes
     return (strlen(path) > config_message->json_object_length)
         && (strncmp(config_message->json_object, path, config_message->json_object_length) == 0)
         && (path[config_message->json_object_length] == '/');
+}
+
+static int config_set_non_negative_integer(config_message_t *config_message, edJSON_value_t value, int *destination, const char *field_name, const char *app_name) {
+    if(value.value_type != EDJSON_VT_INTEGER) {
+        log_ni_error("edJSON_callback() %s value type should be integer for app %s", field_name, app_name);
+        config_message->return_code = 2;
+        return -1;
+    }
+
+    if(value.value.integer < 0) {
+        log_ni_error("edJSON_callback() %s value should not be negative for app %s", field_name, app_name);
+        config_message->return_code = 2;
+        return -1;
+    }
+
+    *destination = value.value.integer;
+    return 0;
 }

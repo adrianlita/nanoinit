@@ -14,6 +14,7 @@ dependencies.
 - [What nanoinit does](#what-nanoinit-does)
 - [Quick start](#quick-start)
 - [Building](#building)
+- [Testing](#testing)
 - [Using nanoinit in Docker](#using-nanoinit-in-docker)
 - [Command-line arguments](#command-line-arguments)
 - [Environment variables](#environment-variables)
@@ -36,6 +37,7 @@ a full init system. Typical use cases include:
 
 - starting multiple long-running processes in one container
 - redirecting each process' `stdout` and `stderr`
+- rotating redirected application output files by size
 - automatically restarting selected processes when they exit
 - disabling selected processes during debugging with manual mode
 - reloading the configuration without replacing the container
@@ -136,6 +138,20 @@ docker run --rm -v "$PWD/deploy/release:/opt/release" nanoinit-builder-alpine
 
 Each builder copies the compiled `nanoinit` binary to `/opt/release/nanoinit` in
 the mounted release directory.
+
+## Testing
+
+Run the feature test suite from the repository root:
+
+```sh
+python3 -m unittest discover -s test -p 'test_*.py'
+```
+
+The Python tests build `nanoinit`, create temporary helper applications and
+configs, then verify the supervisor behavior through the compiled binary. Each
+feature test lives in its own file under `test/`. The suite covers config
+parsing, arguments, environment overrides, manual mode, output redirection,
+autorestart, reloads, `--log-path`, and application log rotation.
 
 ## Using nanoinit in Docker
 
@@ -295,7 +311,11 @@ Full application entry:
         "autorestart": true,
         "manual": false,
         "stdout": "/var/log/app.stdout.log",
-        "stderr": "/var/log/app.stderr.log"
+        "stdout_rotate_size": 10485760,
+        "stdout_rotate_count": 5,
+        "stderr": "/var/log/app.stderr.log",
+        "stderr_rotate_size": 10485760,
+        "stderr_rotate_count": 5
     }
 }
 ```
@@ -362,6 +382,38 @@ Optional string. Redirects the application's standard output.
 - non-empty string: write `stdout` to that path
 - empty string `""`: redirect `stdout` to `/dev/null`
 
+`stdout_rotate_size`
+
+Optional integer. Default: `0`.
+
+When greater than `0`, enables size-based rotation for the file configured by
+`stdout`. The value is a byte limit. When the current `stdout` log reaches that
+limit, nanoinit rotates it and starts a new current log file.
+
+Rotation only applies when `stdout` is a non-empty file path. It is ignored when
+`stdout` is omitted or set to `""`.
+
+`stdout_rotate_count`
+
+Optional integer. Default: `1`.
+
+Number of rotated `stdout` files to keep. For example, with:
+
+```json
+"stdout": "/var/log/app.stdout.log",
+"stdout_rotate_size": 10485760,
+"stdout_rotate_count": 3
+```
+
+nanoinit keeps:
+
+- `/var/log/app.stdout.log`
+- `/var/log/app.stdout.log.1`
+- `/var/log/app.stdout.log.2`
+- `/var/log/app.stdout.log.3`
+
+Set `stdout_rotate_count` to `0` to keep only the current log file.
+
 `stderr`
 
 Optional string. Redirects the application's standard error.
@@ -369,6 +421,21 @@ Optional string. Redirects the application's standard error.
 - omitted: inherit nanoinit's `stderr`
 - non-empty string: write `stderr` to that path
 - empty string `""`: redirect `stderr` to `/dev/null`
+
+`stderr_rotate_size`
+
+Optional integer. Default: `0`.
+
+When greater than `0`, enables size-based rotation for the file configured by
+`stderr`. The value is a byte limit. Rotation only applies when `stderr` is a
+non-empty file path.
+
+`stderr_rotate_count`
+
+Optional integer. Default: `1`.
+
+Number of rotated `stderr` files to keep. Set it to `0` to keep only the current
+log file.
 
 ### Dedicated config file
 
@@ -488,6 +555,11 @@ Use `stdout` and `stderr` in the config file to redirect application streams.
 Relative output paths are resolved relative to nanoinit's current working
 directory.
 
+Use `stdout_rotate_size` / `stdout_rotate_count` and
+`stderr_rotate_size` / `stderr_rotate_count` to rotate application output files.
+Rotation is handled by nanoinit while the supervised process is running, so the
+application does not need to reopen its logs.
+
 Example:
 
 ```json
@@ -495,6 +567,8 @@ Example:
     "api": {
         "path": "/usr/local/bin/api",
         "stdout": "/var/log/api.stdout.log",
+        "stdout_rotate_size": 10485760,
+        "stdout_rotate_count": 5,
         "stderr": "/var/log/api.stderr.log"
     },
     "worker": {
@@ -508,8 +582,13 @@ Example:
 In this example:
 
 - `api` writes its output to files
+- `api` keeps up to five rotated stdout files, each around 10 MiB
 - `worker` output is discarded through `/dev/null`
 - nanoinit's own logs still follow `--verbose` and `--log-path`
+
+The rotated file names use numeric suffixes. For `stdout` set to
+`/var/log/api.stdout.log`, the most recent rotated file is
+`/var/log/api.stdout.log.1`, then `.2`, and so on.
 
 ## Signals and reloads
 
@@ -669,6 +748,18 @@ Check that the parent directory exists and that the process user can write to it
 `nanoinit` opens configured output files directly; it does not create missing
 parent directories.
 
+### Log rotation does not happen
+
+Check that:
+
+- `stdout` or `stderr` is set to a non-empty file path
+- the matching `*_rotate_size` field is greater than `0`
+- the rotate fields are integers, not strings
+- the process writes enough data to reach the configured byte limit
+
+Rotation is not applied to inherited terminal output or to streams redirected to
+`/dev/null`.
+
 ### Reload does not work
 
 Make sure the target nanoinit process is visible in `/proc` from where
@@ -700,10 +791,9 @@ kill -USR1 <nanoinit-pid>
 |   |-- supervisor.c
 |   `-- edJSON/
 `-- test/
-    |-- config1.json
-    |-- config2.json
-    |-- config3.json
-    `-- config4.json
+    |-- common.py
+    |-- test-config.json
+    `-- test_*.py
 ```
 
 Important source files:

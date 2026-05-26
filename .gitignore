@@ -57,3 +57,5 @@ nanoinit
 
 .vscode/
 .idea/
+__pycache__/
+*.pyc
