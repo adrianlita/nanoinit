@@ -280,6 +280,7 @@ switch_config_message_state:
 
                 //init memory
                 memset(&config.applications[config.application_count - 1], 0, sizeof(nanoinit_application_config_t));
+                config.applications[config.application_count - 1].autostart = true;
                 config.applications[config.application_count - 1].stdout_rotate_count = 1;
                 config.applications[config.application_count - 1].stderr_rotate_count = 1;
 
@@ -404,22 +405,22 @@ switch_config_message_state:
                 config.applications[config.application_count - 1].autorestart = value.value.boolean;
             }
 
-            //if component is manual
-            else if(strcmp(current_value, "manual") == 0) {
+            //if component is autostart
+            else if(strcmp(current_value, "autostart") == 0) {
                 if(path_size != component) {
-                    log_ni_error("edJSON_callback() manual should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    log_ni_error("edJSON_callback() autostart should not have child objects for app %s", config.applications[config.application_count - 1].name);
                     config_message->return_code = 2;
                     return 1;
                 }
 
                 if(value.value_type != EDJSON_VT_BOOL) {
-                    log_ni_error("edJSON_callback() manual value type boolean be string for app %s", config.applications[config.application_count - 1].name);
+                    log_ni_error("edJSON_callback() autostart value type should be boolean for app %s", config.applications[config.application_count - 1].name);
                     config_message->return_code = 2;
                     return 1;
                 }
 
-                //set manual
-                config.applications[config.application_count - 1].manual = value.value.boolean;
+                //set autostart
+                config.applications[config.application_count - 1].autostart = value.value.boolean;
             }
 
             //if component is stdout
@@ -453,6 +454,24 @@ switch_config_message_state:
                 config.applications[config.application_count - 1].stdout_path = stdout_path;
             }
 
+            //if component is stdout_passthrough
+            else if(strcmp(current_value, "stdout_passthrough") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() stdout_passthrough should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(value.value_type != EDJSON_VT_BOOL) {
+                    log_ni_error("edJSON_callback() stdout_passthrough value type should be boolean for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                //set stdout_passthrough
+                config.applications[config.application_count - 1].stdout_passthrough = value.value.boolean;
+            }
+
             //if component is stderr
             else if(strcmp(current_value, "stderr") == 0) {
                 if(path_size != component) {
@@ -482,6 +501,24 @@ switch_config_message_state:
                 }
                 free(config.applications[config.application_count - 1].stderr_path);
                 config.applications[config.application_count - 1].stderr_path = stderr_path;
+            }
+
+            //if component is stderr_passthrough
+            else if(strcmp(current_value, "stderr_passthrough") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() stderr_passthrough should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(value.value_type != EDJSON_VT_BOOL) {
+                    log_ni_error("edJSON_callback() stderr_passthrough value type should be boolean for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                //set stderr_passthrough
+                config.applications[config.application_count - 1].stderr_passthrough = value.value.boolean;
             }
 
             //if component is stdout_rotate_size

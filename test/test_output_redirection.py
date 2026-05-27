@@ -29,3 +29,5 @@ class OutputRedirectionTest(NanoInitTestCase):
         self.wait_for_contains(marker, "done")
         self.wait_for_contains(stdout_log, "app stdout")
         self.wait_for_contains(stderr_log, "app stderr")
+        self.assertFileNotContains(self.tmp / "nanoinit.stdout", "app stdout")
+        self.assertFileNotContains(self.tmp / "nanoinit.stderr", "app stderr")

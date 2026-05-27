@@ -20,7 +20,7 @@ dependencies.
 - [Command-line arguments](#command-line-arguments)
 - [Environment variables](#environment-variables)
 - [Configuration file](#configuration-file)
-- [Manual mode](#manual-mode)
+- [Autostart](#autostart)
 - [Logging and output redirection](#logging-and-output-redirection)
 - [Signals and reloads](#signals-and-reloads)
 - [Examples](#examples)
@@ -40,7 +40,7 @@ a full init system. Typical use cases include:
 - redirecting each process' `stdout` and `stderr`
 - rotating redirected application output files by size
 - automatically restarting selected processes when they exit
-- disabling selected processes during debugging with manual mode
+- keeping selected configured processes from starting automatically
 - reloading the configuration without replacing the container
 
 `nanoinit` is not a general-purpose service manager. It does not implement
@@ -61,7 +61,7 @@ Create a config file:
     "worker": {
         "path": "/usr/local/bin/worker",
         "args": "--foreground",
-        "manual": true
+        "autostart": false
     }
 }
 ```
@@ -72,12 +72,8 @@ Run `nanoinit` with that file:
 ./nanoinit --config-file=/etc/nanoinit/config.json --verbose=2
 ```
 
-In normal mode, both `web` and `worker` are started. In manual mode, `web` is
-started but `worker` is skipped because it is marked with `"manual": true`:
-
-```sh
-NANOINIT_MANUAL_MODE=1 ./nanoinit --config-file=/etc/nanoinit/config.json
-```
+`web` starts automatically. `worker` is configured but skipped because it has
+`"autostart": false`.
 
 ## Building
 
@@ -151,7 +147,7 @@ python3 -m unittest discover -s test -p 'test_*.py'
 The Python tests build `nanoinit`, create temporary helper applications and
 configs, then verify the supervisor behavior through the compiled binary. Each
 feature test lives in its own file under `test/`. The suite covers config
-parsing, arguments, environment overrides, manual mode, output redirection,
+parsing, arguments, environment overrides, autostart, output redirection,
 autorestart, reloads, `--log-path`, and application log rotation.
 
 ## Continuous integration and releases
@@ -195,14 +191,8 @@ CMD [
 ]
 ```
 
-For debugging, enable manual mode at container runtime:
-
-```sh
-docker run --rm -e NANOINIT_MANUAL_MODE=1 your-image
-```
-
-This is usually more practical than baking `--manual-mode` into the Dockerfile,
-because you can turn manual mode on only for debug runs.
+To keep an application in the config without launching it automatically, set
+`"autostart": false` for that application.
 
 ## Command-line arguments
 
@@ -240,10 +230,6 @@ The log file receives nanoinit's log entries. Terminal output is filtered by the
 selected verbosity level. `--log-path` is not the same as per-application
 `stdout` or `stderr` redirection, which is configured per app in the JSON file.
 
-### `-m`, `--manual-mode`
-
-Enables manual mode. See [Manual mode](#manual-mode).
-
 ### `-r`, `--reload`
 
 Finds a running `nanoinit` process and sends it `SIGUSR1`. The running supervisor
@@ -267,22 +253,6 @@ Default: `0`.
 
 Environment variables are useful in Docker because they can be supplied at
 runtime without changing the image.
-
-### `NANOINIT_MANUAL_MODE`
-
-Enables manual mode when set to any value.
-
-Examples:
-
-```sh
-NANOINIT_MANUAL_MODE=1 ./nanoinit -c config.json
-```
-
-```sh
-docker run -e NANOINIT_MANUAL_MODE=1 your-image
-```
-
-Only presence is checked. The actual value is not parsed as a boolean.
 
 ### `NANOINIT_CONFIG_FILE`
 
@@ -330,11 +300,13 @@ Full application entry:
         "path": "/usr/local/bin/app",
         "args": ["--listen", "0.0.0.0:8080"],
         "autorestart": true,
-        "manual": false,
+        "autostart": true,
         "stdout": "/var/log/app.stdout.log",
+        "stdout_passthrough": false,
         "stdout_rotate_size": 10485760,
         "stdout_rotate_count": 5,
         "stderr": "/var/log/app.stderr.log",
+        "stderr_passthrough": false,
         "stderr_rotate_size": 10485760,
         "stderr_rotate_count": 5
     }
@@ -388,12 +360,13 @@ to both clean and failing exits.
 
 There is currently no restart delay, maximum retry count, or backoff policy.
 
-`manual`
+`autostart`
 
-Optional boolean. Default: `false`.
+Optional boolean. Default: `true`.
 
-When `true`, the application is skipped if nanoinit is running in manual mode.
-In normal mode, the application starts like any other configured application.
+When `true`, nanoinit starts the application during normal startup and after
+reloads. When `false`, the application remains configured but is not launched by
+nanoinit.
 
 `stdout`
 
@@ -403,13 +376,32 @@ Optional string. Redirects the application's standard output.
 - non-empty string: write `stdout` to that path
 - empty string `""`: redirect `stdout` to `/dev/null`
 
+`stdout_passthrough`
+
+Optional boolean. Default: `false`.
+
+When `true`, nanoinit writes the application's `stdout` to the configured
+`stdout` file and also passes the same bytes through to nanoinit's actual
+standard output. This is useful when you want both a file on disk and container
+stdout logging.
+
+Passthrough only applies when `stdout` is a non-empty file path. If `stdout` is
+omitted, the application already inherits nanoinit's stdout. If `stdout` is
+`""`, output is discarded through `/dev/null` and passthrough is ignored.
+
 `stdout_rotate_size`
 
 Optional integer. Default: `0`.
 
 When greater than `0`, enables size-based rotation for the file configured by
-`stdout`. The value is a byte limit. When the current `stdout` log reaches that
-limit, nanoinit rotates it and starts a new current log file.
+`stdout`. The value is the byte threshold that arms rotation. After the current
+`stdout` log reaches that threshold, nanoinit waits for the next newline
+character, writes that complete line, then rotates the file and starts a new
+current log file.
+
+Rotation does not split a log line. A rotated file can therefore be larger than
+`stdout_rotate_size` when the line that crosses the threshold is longer than the
+remaining space.
 
 Rotation only applies when `stdout` is a non-empty file path. It is ignored when
 `stdout` is omitted or set to `""`.
@@ -443,13 +435,26 @@ Optional string. Redirects the application's standard error.
 - non-empty string: write `stderr` to that path
 - empty string `""`: redirect `stderr` to `/dev/null`
 
+`stderr_passthrough`
+
+Optional boolean. Default: `false`.
+
+When `true`, nanoinit writes the application's `stderr` to the configured
+`stderr` file and also passes the same bytes through to nanoinit's actual
+standard error.
+
+Passthrough only applies when `stderr` is a non-empty file path. If `stderr` is
+omitted, the application already inherits nanoinit's stderr. If `stderr` is
+`""`, output is discarded through `/dev/null` and passthrough is ignored.
+
 `stderr_rotate_size`
 
 Optional integer. Default: `0`.
 
 When greater than `0`, enables size-based rotation for the file configured by
-`stderr`. The value is a byte limit. Rotation only applies when `stderr` is a
-non-empty file path.
+`stderr`. The value is the byte threshold that arms rotation. After the current
+`stderr` log reaches that threshold, nanoinit waits for the next newline before
+rotating. Rotation only applies when `stderr` is a non-empty file path.
 
 `stderr_rotate_count`
 
@@ -473,7 +478,7 @@ If the whole file belongs to nanoinit, omit `--config-json-object`:
     },
     "debug-shell-helper": {
         "path": "/usr/local/bin/debug-helper",
-        "manual": true
+        "autostart": false
     }
 }
 ```
@@ -515,14 +520,13 @@ nanoinit --config-file=/etc/app/config.json --config-json-object=/nanoinit
 
 Only entries under `/nanoinit` are interpreted as supervised applications.
 
-## Manual mode
+## Autostart
 
-Manual mode is designed for debugging.
+`autostart` controls whether nanoinit launches an application automatically.
 
-Sometimes a container normally starts several applications, but during debugging
-you want one of them to stay stopped so you can run it by hand with different
-arguments, under a debugger, or from an interactive shell. Mark that application
-as manual:
+Sometimes a container config includes an application that should stay stopped
+until you run it yourself with different arguments, under a debugger, or from an
+interactive shell. Set `autostart` to `false` for that application:
 
 ```json
 {
@@ -532,12 +536,12 @@ as manual:
     },
     "worker": {
         "path": "/usr/local/bin/worker",
-        "manual": true
+        "autostart": false
     }
 }
 ```
 
-Normal run:
+Run nanoinit:
 
 ```sh
 nanoinit -c config.json
@@ -546,21 +550,11 @@ nanoinit -c config.json
 Result:
 
 - `api` starts
-- `worker` starts
-
-Manual-mode run:
-
-```sh
-NANOINIT_MANUAL_MODE=1 nanoinit -c config.json
-```
-
-Result:
-
-- `api` starts
 - `worker` is skipped
 
-Manual mode does not start an interactive shell and does not change the config
-file. It only filters out applications marked with `"manual": true`.
+`autostart` does not start an interactive shell and does not provide
+per-application control commands. It only controls whether nanoinit launches the
+application automatically.
 
 ## Logging and output redirection
 
@@ -576,10 +570,16 @@ Use `stdout` and `stderr` in the config file to redirect application streams.
 Relative output paths are resolved relative to nanoinit's current working
 directory.
 
+Use `stdout_passthrough` and `stderr_passthrough` when an application stream
+should be written to a configured file and also forwarded to nanoinit's actual
+stdout or stderr.
+
 Use `stdout_rotate_size` / `stdout_rotate_count` and
 `stderr_rotate_size` / `stderr_rotate_count` to rotate application output files.
 Rotation is handled by nanoinit while the supervised process is running, so the
-application does not need to reopen its logs.
+application does not need to reopen its logs. Rotation happens on newline
+boundaries after the configured byte threshold is reached, which avoids splitting
+one application log message across two files.
 
 Example:
 
@@ -588,9 +588,11 @@ Example:
     "api": {
         "path": "/usr/local/bin/api",
         "stdout": "/var/log/api.stdout.log",
+        "stdout_passthrough": true,
         "stdout_rotate_size": 10485760,
         "stdout_rotate_count": 5,
-        "stderr": "/var/log/api.stderr.log"
+        "stderr": "/var/log/api.stderr.log",
+        "stderr_passthrough": true
     },
     "worker": {
         "path": "/usr/local/bin/worker",
@@ -603,6 +605,7 @@ Example:
 In this example:
 
 - `api` writes its output to files
+- `api` also forwards that output to nanoinit's stdout and stderr
 - `api` keeps up to five rotated stdout files, each around 10 MiB
 - `worker` output is discarded through `/dev/null`
 - nanoinit's own logs still follow `--verbose` and `--log-path`
@@ -688,16 +691,17 @@ nanoinit -c config.json -v2
     },
     "worker": {
         "path": "/usr/local/bin/worker",
-        "manual": true
+        "autostart": false
     }
 }
 ```
 
 ```sh
-docker run --rm -it -e NANOINIT_MANUAL_MODE=1 your-image
+docker run --rm -it your-image
 ```
 
-Inside the container, run the worker yourself:
+The worker is configured but not started by nanoinit. Run it yourself when you
+need it:
 
 ```sh
 /usr/local/bin/worker --queue default --debug
@@ -741,33 +745,35 @@ Use an array:
 "args": ["--host", "0.0.0.0", "--port", "8080"]
 ```
 
-### A manual app still starts
+### An autostart-disabled app still starts
 
-Manual mode must be enabled globally and the app must be marked manual.
-
-The app entry needs:
+Check that the application entry uses the current field name and a boolean
+value:
 
 ```json
-"manual": true
+"autostart": false
 ```
 
-The nanoinit process needs either:
-
-```sh
-nanoinit --manual-mode -c config.json
-```
-
-or:
-
-```sh
-NANOINIT_MANUAL_MODE=1 nanoinit -c config.json
-```
+If this field is misspelled or set as a string, config parsing fails and
+nanoinit falls back to zero-config behavior.
 
 ### Output files are not created
 
 Check that the parent directory exists and that the process user can write to it.
 `nanoinit` opens configured output files directly; it does not create missing
 parent directories.
+
+### Passthrough output is not visible
+
+Check that:
+
+- `stdout_passthrough` or `stderr_passthrough` is set to `true`
+- the matching `stdout` or `stderr` field is a non-empty file path
+- the passthrough field is a boolean, not a string
+
+Passthrough is not needed when `stdout` or `stderr` is omitted because the
+application already inherits nanoinit's stream. Passthrough is ignored when the
+stream is redirected to `/dev/null` with `""`.
 
 ### Log rotation does not happen
 
@@ -777,6 +783,7 @@ Check that:
 - the matching `*_rotate_size` field is greater than `0`
 - the rotate fields are integers, not strings
 - the process writes enough data to reach the configured byte limit
+- the process writes a newline after reaching the limit
 
 Rotation is not applied to inherited terminal output or to streams redirected to
 `/dev/null`.
@@ -823,7 +830,7 @@ Important source files:
 
 - `source/arguments.c`: command-line arguments and environment overrides
 - `source/config.c`: JSON parsing and config validation
-- `source/supervisor.c`: process spawning, supervision, manual mode, signals
+- `source/supervisor.c`: process spawning, supervision, autostart, signals
 - `source/nanoinit.c`: reload helper
 - `source/log.c`: nanoinit logging
 

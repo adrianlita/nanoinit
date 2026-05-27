@@ -24,15 +24,18 @@ The suite covers:
 - environment overrides for config file and config object
 - array arguments
 - string arguments as one argument
-- manual mode through `--manual-mode`
-- manual mode through `NANOINIT_MANUAL_MODE`
+- `autostart` defaulting to `true`
+- `autostart: false` skipping application startup
+- removed manual mode environment and flag behavior
 - application `stdout` redirection
 - application `stderr` redirection
+- application `stdout` / `stderr` passthrough
 - empty `stdout` / `stderr` redirection to `/dev/null`
 - `autorestart`
 - `SIGUSR1` config reload
 - nanoinit `--log-path`
 - application `stdout` / `stderr` log rotation
+- newline-boundary rotation behavior
 - rotate count `0`
 
 These tests are black-box feature tests against the compiled binary, implemented

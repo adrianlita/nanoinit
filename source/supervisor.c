@@ -28,7 +28,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
-#include <stdbool.h>
 #include <errno.h>
 
 #include <unistd.h>
@@ -46,6 +45,7 @@ typedef struct supervisor_output_stream_s {
     const char *path;
     int rotate_size;
     int rotate_count;
+    int passthrough_fd;
     long long bytes_written;
     const char *application_name;
     const char *stream_name;
@@ -76,10 +76,29 @@ static void supervisor_close_output_stream(supervisor_output_stream_t *stream);
 static void supervisor_close_all_output_streams(void);
 static void supervisor_drain_output_streams(int timeout_ms);
 static void supervisor_drain_scb_output_streams(supervisor_control_block_t *scb);
-static int supervisor_output_stream_configured(const char *path, int rotate_size);
-static int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_fd, const char *path, int rotate_size, int rotate_count, const char *application_name, const char *stream_name);
+static int supervisor_file_output_configured(const char *path);
+static int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough);
+static int supervisor_start_output_stream(
+    supervisor_output_stream_t *stream,
+    int pipe_fd,
+    const char *path,
+    int rotate_size,
+    int rotate_count,
+    int passthrough_fd,
+    const char *application_name,
+    const char *stream_name
+);
 static int supervisor_open_output_stream_file(supervisor_output_stream_t *stream);
 static int supervisor_rotate_output_stream(supervisor_output_stream_t *stream);
+static int supervisor_write_fd(
+    supervisor_output_stream_t *stream,
+    int fd,
+    const char *buffer,
+    size_t size,
+    long long *bytes_written,
+    const char *destination
+);
+static int supervisor_write_output_stream_chunk(supervisor_output_stream_t *stream, const char *buffer, size_t size);
 static int supervisor_write_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size);
 static void supervisor_reap_children(void);
 static void supervisor_log_process_status(const char *name, pid_t pid, int status, int app_error);
@@ -88,7 +107,6 @@ static void supervisor_sigusr1_cb(int signo);
 
 static volatile sig_atomic_t supervisor_got_signal_stop = 0;
 static volatile sig_atomic_t supervisor_got_signal_reload = 0;
-static bool manual_mode = false;
 static supervisor_control_block_t *scb = 0;
 static int scb_count = 0;
 
@@ -98,8 +116,6 @@ supervisor_start_begin:
     //initialize everything
     supervisor_got_signal_stop = 0;
     supervisor_got_signal_reload = 0;
-
-    manual_mode = arguments->manual_mode;
 
     scb_count = config ? config->application_count : 0;
     if(scb_count > 0) {
@@ -204,35 +220,53 @@ static void supervisor_sigusr1_cb(int signo) {
 
 
 static supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
-    if(manual_mode && scb->application->manual) {
+    if(!scb->application->autostart) {
         scb->pid = 0;
         scb->running = 0;
-        log("supervisor_spawn() process %s not spawned because is marked as manual", scb->application->name);
+        log("supervisor_spawn() process %s not spawned because autostart is disabled", scb->application->name);
         return SUPERVISOR_SPAWN_SKIPPED;
     }
 
     int stdout_pipe[2] = { -1, -1 };
     int stderr_pipe[2] = { -1, -1 };
-    int rotate_stdout = supervisor_output_stream_configured(scb->application->stdout_path, scb->application->stdout_rotate_size);
-    int rotate_stderr = supervisor_output_stream_configured(scb->application->stderr_path, scb->application->stderr_rotate_size);
+    int stdout_is_file = supervisor_file_output_configured(scb->application->stdout_path);
+    int stderr_is_file = supervisor_file_output_configured(scb->application->stderr_path);
+    int pipe_stdout = supervisor_output_stream_configured(
+        scb->application->stdout_path,
+        scb->application->stdout_rotate_size,
+        scb->application->stdout_passthrough
+    );
+    int pipe_stderr = supervisor_output_stream_configured(
+        scb->application->stderr_path,
+        scb->application->stderr_rotate_size,
+        scb->application->stderr_passthrough
+    );
 
     supervisor_close_output_stream(&scb->stdout_stream);
     supervisor_close_output_stream(&scb->stderr_stream);
 
-    if((scb->application->stdout_rotate_size > 0) && !rotate_stdout) {
+    if((scb->application->stdout_rotate_size > 0) && !stdout_is_file) {
         log_ni_error("supervisor_spawn() stdout rotation ignored for app %s because stdout is not a file path", scb->application->name);
     }
 
-    if((scb->application->stderr_rotate_size > 0) && !rotate_stderr) {
+    if((scb->application->stderr_rotate_size > 0) && !stderr_is_file) {
         log_ni_error("supervisor_spawn() stderr rotation ignored for app %s because stderr is not a file path", scb->application->name);
     }
 
-    if(rotate_stdout && (pipe(stdout_pipe) != 0)) {
+    if(scb->application->stdout_passthrough && (scb->application->stdout_path != 0) && !stdout_is_file) {
+        log_ni_error("supervisor_spawn() stdout passthrough ignored for app %s because stdout is not a file path", scb->application->name);
+    }
+
+    if(scb->application->stderr_passthrough && (scb->application->stderr_path != 0) && !stderr_is_file) {
+        log_ni_error("supervisor_spawn() stderr passthrough ignored for app %s because stderr is not a file path", scb->application->name);
+    }
+
+    if(pipe_stdout && (pipe(stdout_pipe) != 0)) {
         log_ni_error("supervisor_spawn() could not create stdout pipe for app %s", scb->application->name);
         return SUPERVISOR_SPAWN_ERROR;
     }
 
-    if(rotate_stderr && (pipe(stderr_pipe) != 0)) {
+    if(pipe_stderr && (pipe(stderr_pipe) != 0)) {
         log_ni_error("supervisor_spawn() could not create stderr pipe for app %s", scb->application->name);
         if(stdout_pipe[0] >= 0) {
             close(stdout_pipe[0]);
@@ -267,7 +301,7 @@ static supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *sc
         signal(SIGUSR1, SIG_DFL);
 
         //redirect stdout ?
-        if(rotate_stdout) {
+        if(pipe_stdout) {
             close(stdout_pipe[0]);
             if(dup2(stdout_pipe[1], STDOUT_FILENO) < 0) {
                 log_ni_error("supervisor_spawn() could not redirect stdout pipe for app %s", scb->application->name);
@@ -295,7 +329,7 @@ static supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *sc
         }
 
         //redirect stderr ?
-        if(rotate_stderr) {
+        if(pipe_stderr) {
             close(stderr_pipe[0]);
             if(dup2(stderr_pipe[1], STDERR_FILENO) < 0) {
                 log_ni_error("supervisor_spawn() could not redirect stderr pipe for app %s", scb->application->name);
@@ -377,16 +411,36 @@ static supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *sc
         _exit(result);
     }
 
-    if(rotate_stdout) {
+    if(pipe_stdout) {
+        int passthrough_fd = scb->application->stdout_passthrough ? STDOUT_FILENO : -1;
         close(stdout_pipe[1]);
-        if(supervisor_start_output_stream(&scb->stdout_stream, stdout_pipe[0], scb->application->stdout_path, scb->application->stdout_rotate_size, scb->application->stdout_rotate_count, scb->application->name, "stdout") != 0) {
+        if(supervisor_start_output_stream(
+            &scb->stdout_stream,
+            stdout_pipe[0],
+            scb->application->stdout_path,
+            scb->application->stdout_rotate_size,
+            scb->application->stdout_rotate_count,
+            passthrough_fd,
+            scb->application->name,
+            "stdout"
+        ) != 0) {
             close(stdout_pipe[0]);
         }
     }
 
-    if(rotate_stderr) {
+    if(pipe_stderr) {
+        int passthrough_fd = scb->application->stderr_passthrough ? STDERR_FILENO : -1;
         close(stderr_pipe[1]);
-        if(supervisor_start_output_stream(&scb->stderr_stream, stderr_pipe[0], scb->application->stderr_path, scb->application->stderr_rotate_size, scb->application->stderr_rotate_count, scb->application->name, "stderr") != 0) {
+        if(supervisor_start_output_stream(
+            &scb->stderr_stream,
+            stderr_pipe[0],
+            scb->application->stderr_path,
+            scb->application->stderr_rotate_size,
+            scb->application->stderr_rotate_count,
+            passthrough_fd,
+            scb->application->name,
+            "stderr"
+        ) != 0) {
             close(stderr_pipe[0]);
         }
     }
@@ -427,6 +481,7 @@ static void supervisor_init_output_stream(supervisor_output_stream_t *stream) {
     stream->path = 0;
     stream->rotate_size = 0;
     stream->rotate_count = 0;
+    stream->passthrough_fd = -1;
     stream->bytes_written = 0;
     stream->application_name = 0;
     stream->stream_name = 0;
@@ -451,11 +506,24 @@ static void supervisor_close_all_output_streams(void) {
     }
 }
 
-static int supervisor_output_stream_configured(const char *path, int rotate_size) {
-    return (path != 0) && (path[0] != 0) && (rotate_size > 0);
+static int supervisor_file_output_configured(const char *path) {
+    return (path != 0) && (path[0] != 0);
 }
 
-static int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_fd, const char *path, int rotate_size, int rotate_count, const char *application_name, const char *stream_name) {
+static int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough) {
+    return supervisor_file_output_configured(path) && ((rotate_size > 0) || passthrough);
+}
+
+static int supervisor_start_output_stream(
+    supervisor_output_stream_t *stream,
+    int pipe_fd,
+    const char *path,
+    int rotate_size,
+    int rotate_count,
+    int passthrough_fd,
+    const char *application_name,
+    const char *stream_name
+) {
     int flags = fcntl(pipe_fd, F_GETFL, 0);
     if(flags < 0) {
         log_ni_error("supervisor_start_output_stream() could not read pipe flags for %s %s", application_name, stream_name);
@@ -471,6 +539,7 @@ static int supervisor_start_output_stream(supervisor_output_stream_t *stream, in
     stream->path = path;
     stream->rotate_size = rotate_size;
     stream->rotate_count = rotate_count;
+    stream->passthrough_fd = passthrough_fd;
     stream->bytes_written = 0;
     stream->application_name = application_name;
     stream->stream_name = stream_name;
@@ -491,7 +560,7 @@ static int supervisor_open_output_stream_file(supervisor_output_stream_t *stream
     stream->file_fd = open(stream->path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     stream->bytes_written = 0;
     if(stream->file_fd < 0) {
-        log_ni_error("supervisor_open_output_stream_file() could not open %s for app %s %s rotation", stream->path, stream->application_name, stream->stream_name);
+        log_ni_error("supervisor_open_output_stream_file() could not open %s for app %s %s output", stream->path, stream->application_name, stream->stream_name);
         return -1;
     }
 
@@ -563,45 +632,89 @@ static int supervisor_write_output_stream(supervisor_output_stream_t *stream, co
     size_t written_from_buffer = 0;
 
     while(written_from_buffer < size) {
-        if((stream->rotate_size > 0) && (stream->bytes_written >= stream->rotate_size)) {
+        size_t chunk_size = size - written_from_buffer;
+        int rotate_after_chunk = 0;
+
+        if(stream->rotate_size > 0) {
+            if(stream->bytes_written >= stream->rotate_size) {
+                /* Keep appending until a newline so rotation does not split a log message. */
+                const char *newline = memchr(buffer + written_from_buffer, '\n', chunk_size);
+                if(newline != 0) {
+                    chunk_size = (size_t)(newline - (buffer + written_from_buffer)) + 1;
+                    rotate_after_chunk = 1;
+                }
+            }
+            else {
+                long long remaining_size = (long long)stream->rotate_size - stream->bytes_written;
+                if((long long)chunk_size > remaining_size) {
+                    chunk_size = (size_t)remaining_size;
+                }
+                if((stream->bytes_written + (long long)chunk_size >= stream->rotate_size) &&
+                   (buffer[written_from_buffer + chunk_size - 1] == '\n')) {
+                    rotate_after_chunk = 1;
+                }
+            }
+        }
+
+        if(supervisor_write_output_stream_chunk(stream, buffer + written_from_buffer, chunk_size) != 0) {
+            return -1;
+        }
+
+        written_from_buffer += chunk_size;
+
+        if(rotate_after_chunk) {
             if(supervisor_rotate_output_stream(stream) != 0) {
                 return -1;
             }
         }
+    }
 
-        size_t chunk_size = size - written_from_buffer;
-        if(stream->rotate_size > 0) {
-            long long remaining_size = (long long)stream->rotate_size - stream->bytes_written;
-            if(remaining_size <= 0) {
+    return 0;
+}
+
+static int supervisor_write_output_stream_chunk(supervisor_output_stream_t *stream, const char *buffer, size_t size) {
+    if(supervisor_write_fd(stream, stream->file_fd, buffer, size, &stream->bytes_written, "file") != 0) {
+        return -1;
+    }
+
+    if(stream->passthrough_fd >= 0) {
+        if(supervisor_write_fd(stream, stream->passthrough_fd, buffer, size, 0, "passthrough") != 0) {
+            return -1;
+        }
+    }
+
+    return 0;
+}
+
+static int supervisor_write_fd(
+    supervisor_output_stream_t *stream,
+    int fd,
+    const char *buffer,
+    size_t size,
+    long long *bytes_written,
+    const char *destination
+) {
+    size_t written_from_chunk = 0;
+
+    while(written_from_chunk < size) {
+        ssize_t write_result = write(fd, buffer + written_from_chunk, size - written_from_chunk);
+        if(write_result < 0) {
+            if(errno == EINTR) {
                 continue;
             }
 
-            if((long long)chunk_size > remaining_size) {
-                chunk_size = (size_t)remaining_size;
-            }
+            log_ni_error("supervisor_write_output_stream() could not write %s output for app %s to %s", stream->stream_name, stream->application_name, destination);
+            return -1;
         }
 
-        size_t written_from_chunk = 0;
-        while(written_from_chunk < chunk_size) {
-            ssize_t write_result = write(stream->file_fd, buffer + written_from_buffer + written_from_chunk, chunk_size - written_from_chunk);
-            if(write_result < 0) {
-                if(errno == EINTR) {
-                    continue;
-                }
-
-                log_ni_error("supervisor_write_output_stream() could not write %s output for app %s", stream->stream_name, stream->application_name);
-                return -1;
-            }
-
-            if(write_result == 0) {
-                return -1;
-            }
-
-            written_from_chunk += (size_t)write_result;
-            stream->bytes_written += write_result;
+        if(write_result == 0) {
+            return -1;
         }
 
-        written_from_buffer += chunk_size;
+        written_from_chunk += (size_t)write_result;
+        if(bytes_written != 0) {
+            *bytes_written += write_result;
+        }
     }
 
     return 0;

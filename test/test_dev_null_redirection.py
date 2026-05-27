@@ -20,7 +20,9 @@ class DevNullRedirectionTest(NanoInitTestCase):
                 "null-output": {
                     "path": str(app),
                     "stdout": "",
+                    "stdout_passthrough": True,
                     "stderr": "",
+                    "stderr_passthrough": True,
                 }
             },
         )

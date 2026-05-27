@@ -34,10 +34,12 @@ typedef struct nanoinit_application_config_s {
     char **args;
 
     bool autorestart;
-    bool manual;
+    bool autostart;
 
     char *stdout_path;
     char *stderr_path;
+    bool stdout_passthrough;
+    bool stderr_passthrough;
 
     int stdout_rotate_size;
     int stdout_rotate_count;

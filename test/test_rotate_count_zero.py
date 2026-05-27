@@ -34,3 +34,6 @@ class RotateCountZeroTest(NanoInitTestCase):
         self.assertTrue(stdout_log.exists())
         self.assertFileSizeLessEqual(stdout_log, 64)
         self.assertFalse((self.tmp / "app-zero.out.1").exists())
+
+        for line in stdout_log.read_bytes().splitlines(keepends=True):
+            self.assertEqual(b"012345678901234567890123456789\n", line)
