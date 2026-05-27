@@ -26,6 +26,11 @@
 #include <argp.h>
 #include <string.h>
 #include <stdlib.h>
+#include <unistd.h>
+
+#ifndef NANOINIT_DEFAULT_CONFIG_FILE
+#define NANOINIT_DEFAULT_CONFIG_FILE "/etc/nanoinit/config.json"
+#endif
 
 static nanoinit_arguments_t arguments = {0};
 
@@ -34,7 +39,7 @@ const char *argp_program_bug_address = "<adrian@axiplus.com>";
 static char doc[] = "nanoinit - for documentation and usage check https://github.com/AXIPlus/nanoinit";
 
 static struct argp_option options[] = {
-    { "config-file", 'c', "/path/to/config.json", 0, "Specifies the configuration JSON file. Default value is null, which means that no apps will be run, but nanoinit will sleep for infinity and wait for a kill signal.", 0 },
+    { "config-file", 'c', "/path/to/config.json", 0, "Specifies the configuration JSON file. If omitted, nanoinit uses /etc/nanoinit/config.json when it exists; otherwise no apps will be run, but nanoinit will sleep for infinity and wait for a kill signal.", 0 },
     { "config-json-object", 'j', "nanoinit-settings", 0, "Specifies the parent JSON object. Default value is null, which means that it will look directly into the root of the JSON file.", 0},
     { "log-path", 'l', "/path/to/log.txt", 0, "Specified the path for writing log-files. Default only uses stderr and stdout for logging.", 0 },
     { "reload", 'r', 0, 0, "Looks for top nanoinit process and sends a SIGSUSR1 signal to it, forcing it to terminate all apps, reload config and restart apps.", 0 },
@@ -56,6 +61,10 @@ const nanoinit_arguments_t *arguments_init(int argc, char **argv) {
             free(arguments.config_file);
         }
         arguments.config_file = strdup(config_file_env);
+    }
+
+    if((arguments.config_file == 0) && (access(NANOINIT_DEFAULT_CONFIG_FILE, F_OK) == 0)) {
+        arguments.config_file = strdup(NANOINIT_DEFAULT_CONFIG_FILE);
     }
 
     char *config_json_object_env = getenv("NANOINIT_CONFIG_JSON_OBJECT");

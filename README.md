@@ -200,9 +200,11 @@ To keep an application in the config without launching it automatically, set
 
 Path to the JSON configuration file.
 
-If this argument is omitted, no configuration is loaded. `nanoinit` starts no
-applications and remains running until it receives a stop signal. This is useful
-for keeping a container alive while debugging its filesystem or environment.
+If this argument is omitted, nanoinit checks `/etc/nanoinit/config.json`. When
+that file exists, nanoinit uses it as the config file. When it does not exist,
+no configuration is loaded: nanoinit starts no applications and remains running
+until it receives a stop signal. This is useful for keeping a container alive
+while debugging its filesystem or environment.
 
 ### `-j`, `--config-json-object=/path/in/json`
 
@@ -256,7 +258,7 @@ runtime without changing the image.
 
 ### `NANOINIT_CONFIG_FILE`
 
-Overrides `--config-file`.
+Overrides `--config-file` and the default `/etc/nanoinit/config.json` lookup.
 
 ```sh
 NANOINIT_CONFIG_FILE=/tmp/debug-config.json ./nanoinit -c /etc/nanoinit/config.json
@@ -657,8 +659,8 @@ contains `nanoinit`, then sends `SIGUSR1` to it.
 nanoinit
 ```
 
-No config file is loaded, no applications are started, and nanoinit waits for a
-stop signal.
+If `/etc/nanoinit/config.json` does not exist, no config file is loaded, no
+applications are started, and nanoinit waits for a stop signal.
 
 ### Run two apps
 

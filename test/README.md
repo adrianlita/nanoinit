@@ -18,6 +18,7 @@ test lives in its own `test_*.py` file, with shared helpers in `common.py`.
 The suite covers:
 
 - no-config zero-config behavior
+- default `/etc/nanoinit/config.json` lookup behavior
 - invalid config fallback behavior
 - root config parsing
 - nested config parsing with `--config-json-object`
