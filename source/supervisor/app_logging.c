@@ -233,15 +233,16 @@ static int supervisor_write_output_stream_raw(supervisor_output_stream_t *stream
     while(written_from_buffer < size) {
         size_t chunk_size = size - written_from_buffer;
         if((stream->rotate_size > 0) && (stream->bytes_written + (long long)chunk_size > stream->rotate_size)) {
-            size_t available = 0;
+            size_t threshold_index = 0;
             if(stream->bytes_written < stream->rotate_size) {
-                available = (size_t)(stream->rotate_size - stream->bytes_written);
+                threshold_index = (size_t)(stream->rotate_size - stream->bytes_written);
             }
 
             size_t newline_chunk = 0;
-            for(size_t i = 0; (i < chunk_size) && (i <= available); i++) {
+            for(size_t i = threshold_index; i < chunk_size; i++) {
                 if(buffer[written_from_buffer + i] == '\n') {
                     newline_chunk = i + 1;
+                    break;
                 }
             }
 
