@@ -26,6 +26,7 @@
 
 #include "internal.h"
 #include "log.h"
+#include "log_formatter.h"
 
 #include <errno.h>
 #include <fcntl.h>
@@ -46,7 +47,12 @@ static int supervisor_write_fd(
     const char *destination
 );
 static int supervisor_write_output_stream_chunk(supervisor_output_stream_t *stream, const char *buffer, size_t size);
+static int supervisor_write_output_stream_raw(supervisor_output_stream_t *stream, const char *buffer, size_t size);
 static int supervisor_write_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size);
+static int supervisor_prefix_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size, char **prefixed_buffer, size_t *prefixed_size);
+static int supervisor_append_output_prefix(supervisor_output_stream_t *stream, char **buffer, size_t *length, size_t *capacity);
+static int supervisor_append_buffer(char **buffer, size_t *length, size_t *capacity, const char *value, size_t value_size);
+static int supervisor_prefix_configured(const char *prefix_logs);
 
 void supervisor_init_output_stream(supervisor_output_stream_t *stream) {
     stream->pipe_fd = -1;
@@ -56,6 +62,9 @@ void supervisor_init_output_stream(supervisor_output_stream_t *stream) {
     stream->rotate_count = 0;
     stream->passthrough_fd = -1;
     stream->bytes_written = 0;
+    stream->prefix_format = 0;
+    stream->prefix_device_name = 0;
+    stream->prefix_at_line_start = 1;
     stream->application_name = 0;
     stream->stream_name = 0;
 }
@@ -67,6 +76,7 @@ void supervisor_close_output_stream(supervisor_output_stream_t *stream) {
     if(stream->file_fd >= 0) {
         close(stream->file_fd);
     }
+    free(stream->prefix_device_name);
 
     supervisor_init_output_stream(stream);
 }
@@ -92,8 +102,12 @@ int supervisor_file_output_configured(const char *path) {
     return (path != 0) && (path[0] != 0);
 }
 
-int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough) {
-    return supervisor_file_output_configured(path) && ((rotate_size > 0) || passthrough);
+int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough, const char *prefix_logs) {
+    if(supervisor_file_output_configured(path)) {
+        return (rotate_size > 0) || passthrough || supervisor_prefix_configured(prefix_logs);
+    }
+
+    return (path == 0) && supervisor_prefix_configured(prefix_logs);
 }
 
 int supervisor_start_output_stream(
@@ -104,7 +118,8 @@ int supervisor_start_output_stream(
     int rotate_count,
     int passthrough_fd,
     const char *application_name,
-    const char *stream_name
+    const char *stream_name,
+    const char *prefix_logs
 ) {
     int flags = fcntl(pipe_fd, F_GETFL, 0);
     if(flags < 0) {
@@ -124,10 +139,16 @@ int supervisor_start_output_stream(
     stream->rotate_count = rotate_count;
     stream->passthrough_fd = passthrough_fd;
     stream->bytes_written = 0;
+    stream->prefix_format = supervisor_prefix_configured(prefix_logs) ? prefix_logs : 0;
+    stream->prefix_at_line_start = 1;
     stream->application_name = application_name;
     stream->stream_name = stream_name;
 
-    if(supervisor_open_output_stream_file(stream) != 0) {
+    if(stream->prefix_format != 0) {
+        stream->prefix_device_name = log_format_resolve_device_name();
+    }
+
+    if(supervisor_file_output_configured(stream->path) && (supervisor_open_output_stream_file(stream) != 0)) {
         stream->file_fd = open("/dev/null", O_WRONLY);
         if(stream->file_fd < 0) {
             log_ni_error("supervisor_start_output_stream() could not open /dev/null fallback for %s %s", application_name, stream_name);
@@ -207,7 +228,7 @@ static int supervisor_rotate_output_stream(supervisor_output_stream_t *stream) {
     return supervisor_open_output_stream_file(stream);
 }
 
-static int supervisor_write_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size) {
+static int supervisor_write_output_stream_raw(supervisor_output_stream_t *stream, const char *buffer, size_t size) {
     size_t written_from_buffer = 0;
     while(written_from_buffer < size) {
         size_t chunk_size = size - written_from_buffer;
@@ -247,9 +268,29 @@ static int supervisor_write_output_stream(supervisor_output_stream_t *stream, co
     return 0;
 }
 
+static int supervisor_write_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size) {
+    if(stream->prefix_format == 0) {
+        return supervisor_write_output_stream_raw(stream, buffer, size);
+    }
+
+    char *prefixed_buffer = 0;
+    size_t prefixed_size = 0;
+    int result = supervisor_prefix_output_stream(stream, buffer, size, &prefixed_buffer, &prefixed_size);
+    if(result != 0) {
+        free(prefixed_buffer);
+        return result;
+    }
+
+    result = supervisor_write_output_stream_raw(stream, prefixed_buffer, prefixed_size);
+    free(prefixed_buffer);
+    return result;
+}
+
 static int supervisor_write_output_stream_chunk(supervisor_output_stream_t *stream, const char *buffer, size_t size) {
-    if(supervisor_write_fd(stream, stream->file_fd, buffer, size, &stream->bytes_written, "file") != 0) {
-        return -1;
+    if(stream->file_fd >= 0) {
+        if(supervisor_write_fd(stream, stream->file_fd, buffer, size, &stream->bytes_written, "file") != 0) {
+            return -1;
+        }
     }
 
     if(stream->passthrough_fd >= 0) {
@@ -259,6 +300,93 @@ static int supervisor_write_output_stream_chunk(supervisor_output_stream_t *stre
     }
 
     return 0;
+}
+
+static int supervisor_prefix_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size, char **prefixed_buffer, size_t *prefixed_size) {
+    char *result = 0;
+    size_t result_length = 0;
+    size_t result_capacity = 0;
+
+    for(size_t i = 0; i < size; i++) {
+        if(stream->prefix_at_line_start) {
+            if(supervisor_append_output_prefix(stream, &result, &result_length, &result_capacity) != 0) {
+                free(result);
+                return -1;
+            }
+            stream->prefix_at_line_start = 0;
+        }
+
+        if(supervisor_append_buffer(&result, &result_length, &result_capacity, buffer + i, 1) != 0) {
+            free(result);
+            return -1;
+        }
+
+        if(buffer[i] == '\n') {
+            stream->prefix_at_line_start = 1;
+        }
+    }
+
+    if(result == 0) {
+        result = (char *)malloc(1);
+        if(result == 0) {
+            return -1;
+        }
+        result[0] = 0;
+    }
+
+    *prefixed_buffer = result;
+    *prefixed_size = result_length;
+    return 0;
+}
+
+static int supervisor_append_output_prefix(supervisor_output_stream_t *stream, char **buffer, size_t *length, size_t *capacity) {
+    char *timestamp = log_format_current_timestamp();
+    log_format_values_t values = {
+        .timestamp = timestamp ? timestamp : "",
+        .app_name = stream->application_name,
+        .device_name = stream->prefix_device_name ? stream->prefix_device_name : "",
+        .message = "",
+    };
+
+    char *prefix = log_format_render(stream->prefix_format, &values);
+    free(timestamp);
+    if(prefix == 0) {
+        return -1;
+    }
+
+    int result = supervisor_append_buffer(buffer, length, capacity, prefix, strlen(prefix));
+    free(prefix);
+    return result;
+}
+
+static int supervisor_append_buffer(char **buffer, size_t *length, size_t *capacity, const char *value, size_t value_size) {
+    if(value_size == 0) {
+        return 0;
+    }
+
+    size_t required_capacity = *length + value_size + 1;
+    if(required_capacity > *capacity) {
+        size_t new_capacity = *capacity ? *capacity : 256;
+        while(new_capacity < required_capacity) {
+            new_capacity *= 2;
+        }
+
+        char *new_buffer = (char *)realloc(*buffer, new_capacity);
+        if(new_buffer == 0) {
+            return -1;
+        }
+        *buffer = new_buffer;
+        *capacity = new_capacity;
+    }
+
+    memcpy(*buffer + *length, value, value_size);
+    *length += value_size;
+    (*buffer)[*length] = 0;
+    return 0;
+}
+
+static int supervisor_prefix_configured(const char *prefix_logs) {
+    return (prefix_logs != 0) && (prefix_logs[0] != 0);
 }
 
 static int supervisor_write_fd(
@@ -301,7 +429,7 @@ void supervisor_drain_output_stream(supervisor_output_stream_t *stream) {
     while(stream->pipe_fd >= 0) {
         ssize_t read_result = read(stream->pipe_fd, buffer, sizeof(buffer));
         if(read_result > 0) {
-            if(stream->file_fd >= 0) {
+            if((stream->file_fd >= 0) || (stream->passthrough_fd >= 0)) {
                 supervisor_write_output_stream(stream, buffer, (size_t)read_result);
             }
         }

@@ -40,6 +40,9 @@ typedef struct supervisor_output_stream_s {
     int rotate_count;
     int passthrough_fd;
     long long bytes_written;
+    const char *prefix_format;
+    char *prefix_device_name;
+    int prefix_at_line_start;
     const char *application_name;
     const char *stream_name;
 } supervisor_output_stream_t;
@@ -83,7 +86,7 @@ void supervisor_close_output_stream(supervisor_output_stream_t *stream);
 void supervisor_close_all_output_streams(void);
 int supervisor_any_stream_open(void);
 int supervisor_file_output_configured(const char *path);
-int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough);
+int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough, const char *prefix_logs);
 int supervisor_start_output_stream(
     supervisor_output_stream_t *stream,
     int pipe_fd,
@@ -92,7 +95,8 @@ int supervisor_start_output_stream(
     int rotate_count,
     int passthrough_fd,
     const char *application_name,
-    const char *stream_name
+    const char *stream_name,
+    const char *prefix_logs
 );
 void supervisor_drain_output_stream(supervisor_output_stream_t *stream);
 void supervisor_drain_output_streams(int timeout_ms);

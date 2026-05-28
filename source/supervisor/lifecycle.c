@@ -44,12 +44,14 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
     int pipe_stdout = supervisor_output_stream_configured(
         scb->application->stdout_path,
         scb->application->stdout_rotate_size,
-        scb->application->stdout_passthrough
+        scb->application->stdout_passthrough,
+        scb->application->prefix_logs
     );
     int pipe_stderr = supervisor_output_stream_configured(
         scb->application->stderr_path,
         scb->application->stderr_rotate_size,
-        scb->application->stderr_passthrough
+        scb->application->stderr_passthrough,
+        scb->application->prefix_logs
     );
 
     supervisor_close_output_stream(&scb->stdout_stream);
@@ -224,7 +226,13 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
     }
 
     if(pipe_stdout) {
-        int passthrough_fd = scb->application->stdout_passthrough ? STDOUT_FILENO : -1;
+        int passthrough_fd = -1;
+        if(stdout_is_file) {
+            passthrough_fd = scb->application->stdout_passthrough ? STDOUT_FILENO : -1;
+        }
+        else if(scb->application->stdout_path == 0) {
+            passthrough_fd = STDOUT_FILENO;
+        }
         close(stdout_pipe[1]);
         if(supervisor_start_output_stream(
             &scb->stdout_stream,
@@ -234,14 +242,21 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
             scb->application->stdout_rotate_count,
             passthrough_fd,
             scb->application->name,
-            "stdout"
+            "stdout",
+            scb->application->prefix_logs
         ) != 0) {
             close(stdout_pipe[0]);
         }
     }
 
     if(pipe_stderr) {
-        int passthrough_fd = scb->application->stderr_passthrough ? STDERR_FILENO : -1;
+        int passthrough_fd = -1;
+        if(stderr_is_file) {
+            passthrough_fd = scb->application->stderr_passthrough ? STDERR_FILENO : -1;
+        }
+        else if(scb->application->stderr_path == 0) {
+            passthrough_fd = STDERR_FILENO;
+        }
         close(stderr_pipe[1]);
         if(supervisor_start_output_stream(
             &scb->stderr_stream,
@@ -251,7 +266,8 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
             scb->application->stderr_rotate_count,
             passthrough_fd,
             scb->application->name,
-            "stderr"
+            "stderr",
+            scb->application->prefix_logs
         ) != 0) {
             close(stderr_pipe[0]);
         }

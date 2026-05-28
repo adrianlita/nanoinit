@@ -203,6 +203,7 @@ void config_free() {
 
         free(config.applications[i].stdout_path);
         free(config.applications[i].stderr_path);
+        free(config.applications[i].prefix_logs);
     }
 
     free(config.applications);
@@ -421,6 +422,36 @@ switch_config_message_state:
 
                 //set autostart
                 config.applications[config.application_count - 1].autostart = value.value.boolean;
+            }
+
+            //if component is prefix_logs
+            else if(strcmp(current_value, "prefix_logs") == 0) {
+                if(path_size != component) {
+                    log_ni_error("edJSON_callback() prefix_logs should not have child objects for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(value.value_type != EDJSON_VT_STRING) {
+                    log_ni_error("edJSON_callback() prefix_logs value type should be string for app %s", config.applications[config.application_count - 1].name);
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                rc = edJSON_string_unescape(current_value, JSON_PARSE_BUFFER_SIZE, value.value.string.value, value.value.string.value_size);
+                if(rc < EDJSON_SUCCESS) {
+                    config_message->return_code = 4;
+                    return 1;
+                }
+
+                char *prefix_logs = strdup(current_value);
+                if(prefix_logs == 0) {
+                    log_ni_error("edJSON_callback() bad memory allocation");
+                    config_message->return_code = 3;
+                    return 1;
+                }
+                free(config.applications[config.application_count - 1].prefix_logs);
+                config.applications[config.application_count - 1].prefix_logs = prefix_logs;
             }
 
             //if component is stdout

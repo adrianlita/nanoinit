@@ -376,6 +376,7 @@ Full application entry:
         "args": ["--listen", "0.0.0.0:8080"],
         "autorestart": true,
         "autostart": true,
+        "prefix_logs": "[{timestamp}] [{device-name}] [{app-name}] ",
         "stdout": "/var/log/app.stdout.log",
         "stdout_passthrough": false,
         "stdout_rotate_size": 10485760,
@@ -442,6 +443,37 @@ Optional boolean. Default: `true`.
 When `true`, nanoinit starts the application during normal startup and after
 reloads. When `false`, the application remains configured but is not launched by
 nanoinit.
+
+`prefix_logs`
+
+Optional string. Default: empty.
+
+When non-empty, nanoinit prefixes every line written by the application to
+`stdout` and `stderr`. The prefix is applied to configured output files and to
+passthrough output.
+
+Supported placeholders:
+
+- `{timestamp}`: current Unix timestamp with millisecond precision
+- `{app-name}`: the application name from the config object
+- `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
+- `{message}`: empty for prefixes
+
+Example:
+
+```json
+{
+    "api": {
+        "path": "/usr/local/bin/api",
+        "prefix_logs": "[{timestamp}] [{device-name}] [{app-name}] "
+    }
+}
+```
+
+If `stdout` or `stderr` is omitted and `prefix_logs` is set, nanoinit captures
+that stream so it can add the prefix, then forwards it to nanoinit's actual
+stdout or stderr. If `stdout` or `stderr` is explicitly set to `""`, output is
+still discarded through `/dev/null`.
 
 `stdout`
 
@@ -686,6 +718,9 @@ directory.
 Use `stdout_passthrough` and `stderr_passthrough` when an application stream
 should be written to a configured file and also forwarded to nanoinit's actual
 stdout or stderr.
+
+Use `prefix_logs` when application output should be tagged per line before it is
+written to configured files or forwarded to nanoinit's stdout/stderr.
 
 Use `stdout_rotate_size` / `stdout_rotate_count` and
 `stderr_rotate_size` / `stderr_rotate_count` to rotate application output files.

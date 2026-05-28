@@ -37,6 +37,7 @@ The suite covers:
 - `SIGUSR1` config reload
 - nanoinit `--log-path`
 - application `stdout` / `stderr` log rotation
+- application `stdout` / `stderr` `prefix_logs`
 - newline-boundary rotation behavior
 - rotate count `0`
 

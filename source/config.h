@@ -35,6 +35,7 @@ typedef struct nanoinit_application_config_s {
 
     bool autorestart;
     bool autostart;
+    char *prefix_logs;
 
     char *stdout_path;
     char *stderr_path;
