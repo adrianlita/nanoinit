@@ -7,10 +7,7 @@ class DefaultConfigFileTest(NanoInitTestCase):
     def build_nanoinit_with_default_config(self, default_config):
         binary = self.tmp / "nanoinit-default-config"
         source_dir = ROOT_DIR / "source"
-        source_files = [
-            *(sorted(source_dir.glob("*.c"))),
-            *(sorted((source_dir / "edJSON").glob("*.c"))),
-        ]
+        source_files = sorted(source_dir.rglob("*.c"))
 
         subprocess.run(
             [

@@ -19,6 +19,7 @@ The suite covers:
 
 - no-config zero-config behavior
 - default `/etc/nanoinit/config.json` lookup behavior
+- control commands: `list`, `ls`, `status`, `start`, `stop`
 - invalid config fallback behavior
 - root config parsing
 - nested config parsing with `--config-json-object`

@@ -32,17 +32,22 @@
 #define NANOINIT_DEFAULT_CONFIG_FILE "/etc/nanoinit/config.json"
 #endif
 
+#ifndef NANOINIT_DEFAULT_CONTROL_SOCKET
+#define NANOINIT_DEFAULT_CONTROL_SOCKET "/tmp/nanoinit.sock"
+#endif
+
 static nanoinit_arguments_t arguments = {0};
 
 const char *argp_program_version = "nanoinit v0.0.1 build 123451234";
 const char *argp_program_bug_address = "<adrian@axiplus.com>";
 static char doc[] = "nanoinit - for documentation and usage check https://github.com/AXIPlus/nanoinit";
+static char args_doc[] = "[status APP | start APP | stop APP | list | ls]";
 
 static struct argp_option options[] = {
     { "config-file", 'c', "/path/to/config.json", 0, "Specifies the configuration JSON file. If omitted, nanoinit uses /etc/nanoinit/config.json when it exists; otherwise no apps will be run, but nanoinit will sleep for infinity and wait for a kill signal.", 0 },
     { "config-json-object", 'j', "nanoinit-settings", 0, "Specifies the parent JSON object. Default value is null, which means that it will look directly into the root of the JSON file.", 0},
     { "log-path", 'l', "/path/to/log.txt", 0, "Specified the path for writing log-files. Default only uses stderr and stdout for logging.", 0 },
-    { "reload", 'r', 0, 0, "Looks for top nanoinit process and sends a SIGSUSR1 signal to it, forcing it to terminate all apps, reload config and restart apps.", 0 },
+    { "reload", 'r', 0, 0, "Looks for top nanoinit process and sends a SIGUSR1 signal to it, forcing it to terminate all apps, reload config and restart apps.", 0 },
     { "verbose", 'v', "0-2", 0, "Specified application print verbosity level. Values are 0(nanoinit ERR)-default, 1(application ERR), 2(LOG).", 0 },
     { 0 } 
 };
@@ -51,7 +56,7 @@ static error_t argp_parse_cb(int key, char *arg, struct argp_state *state);
 
 const nanoinit_arguments_t *arguments_init(int argc, char **argv) {
     //parse provided command line arguments
-    struct argp argp = { options, argp_parse_cb, 0, doc, 0, 0, 0 };
+    struct argp argp = { options, argp_parse_cb, args_doc, doc, 0, 0, 0 };
     argp_parse(&argp, argc, argv, 0, 0, &arguments);
 
     //check config file and config json object in environment vars
@@ -73,6 +78,14 @@ const nanoinit_arguments_t *arguments_init(int argc, char **argv) {
             free(arguments.config_json_object);
         }
         arguments.config_json_object = strdup(config_json_object_env);
+    }
+
+    char *control_socket_env = getenv("NANOINIT_CONTROL_SOCKET");
+    if(control_socket_env != 0) {
+        arguments.control_socket_path = strdup(control_socket_env);
+    }
+    else {
+        arguments.control_socket_path = strdup(NANOINIT_DEFAULT_CONTROL_SOCKET);
     }
 
     return &arguments;
@@ -147,12 +160,56 @@ static error_t argp_parse_cb(int key, char *arg, struct argp_state *state) {
             break;
 
         case ARGP_KEY_ARG:
-            if (state->arg_num >= 2) {
+            if(state->arg_num == 0) {
+                if(iter_arguments->special_mode != NI_NO_SPECIAL_MODE) {
+                    argp_usage(state);
+                }
+
+                if(strcmp(arg, "status") == 0) {
+                    iter_arguments->special_mode = NI_COMMAND_CONTROL_STATUS;
+                }
+                else if(strcmp(arg, "start") == 0) {
+                    iter_arguments->special_mode = NI_COMMAND_CONTROL_START;
+                }
+                else if(strcmp(arg, "stop") == 0) {
+                    iter_arguments->special_mode = NI_COMMAND_CONTROL_STOP;
+                }
+                else if((strcmp(arg, "list") == 0) || (strcmp(arg, "ls") == 0)) {
+                    iter_arguments->special_mode = NI_COMMAND_CONTROL_LIST;
+                }
+                else {
+                    argp_usage(state);
+                }
+            }
+            else if(state->arg_num == 1) {
+                if((iter_arguments->special_mode != NI_COMMAND_CONTROL_STATUS) &&
+                   (iter_arguments->special_mode != NI_COMMAND_CONTROL_START) &&
+                   (iter_arguments->special_mode != NI_COMMAND_CONTROL_STOP)) {
+                    argp_usage(state);
+                }
+
+                iter_arguments->control_app_name = strdup(arg);
+                if(iter_arguments->control_app_name == 0) {
+                    return ARGP_ERR_UNKNOWN;
+                }
+            }
+            else {
                 argp_usage(state);
             }
             break;
 
         case ARGP_KEY_END:
+            if(((iter_arguments->special_mode == NI_COMMAND_CONTROL_STATUS) ||
+                (iter_arguments->special_mode == NI_COMMAND_CONTROL_START) ||
+                (iter_arguments->special_mode == NI_COMMAND_CONTROL_STOP)) &&
+               (iter_arguments->control_app_name == 0)) {
+                argp_usage(state);
+            }
+
+            if((iter_arguments->special_mode == NI_COMMAND_CONTROL_LIST) &&
+               (iter_arguments->control_app_name != 0)) {
+                argp_usage(state);
+            }
 
             break;
 
@@ -167,4 +224,6 @@ void arguments_free() {
     free(arguments.config_file);
     free(arguments.config_json_object);
     free(arguments.log_path);
+    free(arguments.control_socket_path);
+    free(arguments.control_app_name);
 }

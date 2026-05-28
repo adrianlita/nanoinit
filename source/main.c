@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include "arguments.h"
 #include "config.h"
+#include "control.h"
 #include "log.h"
 #include "nanoinit.h"
 #include "supervisor.h"
@@ -48,6 +49,13 @@ int main(int argc, char **argv) {
         switch(arguments->special_mode) {
             case NI_COMMAND_RELOAD:
                 nanoinit_send_reload();
+                break;
+
+            case NI_COMMAND_CONTROL_STATUS:
+            case NI_COMMAND_CONTROL_START:
+            case NI_COMMAND_CONTROL_STOP:
+            case NI_COMMAND_CONTROL_LIST:
+                rc = control_send_command(arguments);
                 break;
 
             default:

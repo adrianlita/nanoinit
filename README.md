@@ -2,8 +2,8 @@
 
 `nanoinit` is a small Linux process supervisor designed for Docker containers.
 It starts one or more configured applications, keeps selected applications alive
-with optional autorestart, forwards termination signals, and can reload its
-configuration while the container is running.
+with optional autorestart, exposes simple runtime controls, forwards termination
+signals, and can reload its configuration while the container is running.
 
 The project is intentionally small: configuration is JSON, application startup is
 done with `fork()` and `execv()`, and there are no runtime service-manager
@@ -21,6 +21,7 @@ dependencies.
 - [Environment variables](#environment-variables)
 - [Configuration file](#configuration-file)
 - [Autostart](#autostart)
+- [Runtime controls](#runtime-controls)
 - [Logging and output redirection](#logging-and-output-redirection)
 - [Signals and reloads](#signals-and-reloads)
 - [Examples](#examples)
@@ -41,11 +42,12 @@ a full init system. Typical use cases include:
 - rotating redirected application output files by size
 - automatically restarting selected processes when they exit
 - keeping selected configured processes from starting automatically
+- checking status and starting or stopping configured processes at runtime
 - reloading the configuration without replacing the container
 
 `nanoinit` is not a general-purpose service manager. It does not implement
 dependency ordering, health checks, privilege switching, environment files, start
-limits, backoff policies, or per-application control commands.
+limits, or backoff policies.
 
 ## Quick start
 
@@ -251,6 +253,32 @@ Controls terminal logging verbosity.
 
 Default: `0`.
 
+### Runtime control commands
+
+When a `nanoinit` supervisor is already running, a second `nanoinit` invocation
+can connect to it and control configured applications:
+
+```sh
+nanoinit list
+nanoinit ls
+nanoinit status <app-name>
+nanoinit start <app-name>
+nanoinit stop <app-name>
+```
+
+These commands do not start another supervisor. They connect to the running
+supervisor through the control socket, print the response, and exit. `<app-name>`
+is the JSON object name from the loaded config.
+
+Use `list` or `ls` to show all configured applications and their status. Use
+`status` for one application. Use `start` to launch a stopped configured
+application, including one with `"autostart": false`. Use `stop` to send
+`SIGTERM` to a running application.
+
+If an application has `"autorestart": true`, `nanoinit stop <app-name>` also
+marks that application as intentionally stopped, so it will not be restarted by
+autorestart. A later `nanoinit start <app-name>` enables it again.
+
 ## Environment variables
 
 Environment variables are useful in Docker because they can be supplied at
@@ -275,6 +303,23 @@ NANOINIT_CONFIG_JSON_OBJECT=/debug/nanoinit ./nanoinit -j /production/nanoinit
 ```
 
 In this example, `/debug/nanoinit` is used.
+
+### `NANOINIT_CONTROL_SOCKET`
+
+Sets the Unix-domain socket used by runtime control commands.
+
+Default: `/tmp/nanoinit.sock`.
+
+The running supervisor and the control command must use the same value:
+
+```sh
+NANOINIT_CONTROL_SOCKET=/run/nanoinit/control.sock nanoinit -c /etc/nanoinit/config.json
+NANOINIT_CONTROL_SOCKET=/run/nanoinit/control.sock nanoinit status web
+```
+
+Use this when the default socket path is not writable, when you want the socket
+under `/run`, or when more than one `nanoinit` supervisor runs in the same
+namespace.
 
 ## Configuration file
 
@@ -554,9 +599,44 @@ Result:
 - `api` starts
 - `worker` is skipped
 
-`autostart` does not start an interactive shell and does not provide
-per-application control commands. It only controls whether nanoinit launches the
-application automatically.
+`autostart` only controls whether nanoinit launches the application
+automatically during supervisor startup or config reload. A configured
+application with `"autostart": false` can still be launched later with
+`nanoinit start <app-name>`.
+
+## Runtime controls
+
+Runtime controls let you inspect and change the state of applications from
+inside the same container, or from any environment that can access the control
+socket, while the main `nanoinit` supervisor keeps running.
+
+The control interface is intentionally small:
+
+```sh
+nanoinit list
+nanoinit status api
+nanoinit start worker
+nanoinit stop worker
+```
+
+`list` and `ls` print a table with the application name, current status, PID,
+uptime, `autostart`, and `autorestart` values.
+
+`status <app-name>` prints details for one application. Status is one of:
+
+- `running`: the process is currently running and desired to be running
+- `stopping`: the process is still running after an explicit stop request
+- `stopped`: no process is currently running
+
+`start <app-name>` starts the configured application if it is stopped. If it is
+already running, the command reports that and leaves it alone.
+
+`stop <app-name>` sends `SIGTERM` to the configured application if it is running.
+If the application has `autorestart` enabled, this command suppresses
+autorestart until the next `start <app-name>` command or config reload.
+
+Control commands return a non-zero exit code when the control socket cannot be
+reached, the application name does not exist, or the command cannot be completed.
 
 ## Logging and output redirection
 
@@ -817,10 +897,17 @@ kill -USR1 <nanoinit-pid>
 |-- source/
 |   |-- arguments.c
 |   |-- config.c
+|   |-- control.c
 |   |-- log.c
 |   |-- main.c
 |   |-- nanoinit.c
 |   |-- supervisor.c
+|   |-- supervisor/
+|   |   |-- app_logging.c
+|   |   |-- control_server.c
+|   |   |-- internal.h
+|   |   |-- io.c
+|   |   `-- lifecycle.c
 |   `-- edJSON/
 `-- test/
     |-- common.py
@@ -832,7 +919,13 @@ Important source files:
 
 - `source/arguments.c`: command-line arguments and environment overrides
 - `source/config.c`: JSON parsing and config validation
-- `source/supervisor.c`: process spawning, supervision, autostart, signals
+- `source/control.c`: runtime control command client
+- `source/supervisor.c`: top-level supervision loop, signals, reloads
+- `source/supervisor/lifecycle.c`: application spawn, reap, and autorestart
+- `source/supervisor/app_logging.c`: application output capture, passthrough, and log rotation
+- `source/supervisor/io.c`: select loop for control sockets and output pipes
+- `source/supervisor/control_server.c`: runtime control socket server
+- `source/supervisor/internal.h`: internal supervisor shared types and functions
 - `source/nanoinit.c`: reload helper
 - `source/log.c`: nanoinit logging
 

@@ -24,24 +24,6 @@
 
 #pragma once
 
-typedef enum {
-    NI_NO_SPECIAL_MODE = 0,
-    NI_COMMAND_RELOAD = 1,
-    NI_COMMAND_CONTROL_STATUS = 2,
-    NI_COMMAND_CONTROL_START = 3,
-    NI_COMMAND_CONTROL_STOP = 4,
-    NI_COMMAND_CONTROL_LIST = 5,
-} nanoinit_special_mode_t;
+#include "arguments.h"
 
-typedef struct nanoinit_arguments_s {
-    char *config_file;
-    char *config_json_object;
-    char *log_path;
-    char *control_socket_path;
-    char *control_app_name;
-    nanoinit_special_mode_t special_mode;
-    int verbosity_level;
-} nanoinit_arguments_t;
-
-const nanoinit_arguments_t *arguments_init(int argc, char **argv);
-void arguments_free();
+int control_send_command(const nanoinit_arguments_t *arguments);
