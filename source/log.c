@@ -132,8 +132,10 @@ void _log_add(int verbosity_level, const char *format, ...) {
     }
 
     char *timestamp = log_format_current_timestamp();
+    char *timestamp_iso = log_format_current_timestamp_iso();
     log_format_values_t values = {
         .timestamp = timestamp ? timestamp : "",
+        .timestamp_iso = timestamp_iso ? timestamp_iso : "",
         .app_name = LOG_APP_NAME,
         .device_name = log_get_device_name(),
         .message = message,
@@ -143,6 +145,7 @@ void _log_add(int verbosity_level, const char *format, ...) {
     if(rendered_message == 0) {
         rendered_message = strdup(message);
         if(rendered_message == 0) {
+            free(timestamp_iso);
             free(timestamp);
             free(message);
             return;
@@ -166,6 +169,7 @@ void _log_add(int verbosity_level, const char *format, ...) {
     }
 
     free(rendered_message);
+    free(timestamp_iso);
     free(timestamp);
     free(message);
 }

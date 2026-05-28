@@ -48,7 +48,7 @@ class LogPathTest(NanoInitTestCase):
             "config.json",
             {
                 "config-log-format": {"path": str(app)},
-                "ni_log_format": "config={app-name} device={device-name} msg={message}",
+                "ni_log_format": "config={app-name} iso={timestampISO} device={device-name} msg={message}",
             },
         )
 
@@ -63,7 +63,9 @@ class LogPathTest(NanoInitTestCase):
         self.wait_for_contains(log_file, "msg=supervisor_start() successfully spawned")
 
         content = log_file.read_text(errors="replace")
-        self.assertIn("config=nanoinit device=config-device msg=", content)
+        self.assertIn("config=nanoinit iso=", content)
+        self.assertIn("device=config-device msg=", content)
+        self.assertRegex(content, r"iso=\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
 
     def test_environment_log_format_overrides_config(self):
         marker = self.tmp / "env-over-config-log-format.marker"

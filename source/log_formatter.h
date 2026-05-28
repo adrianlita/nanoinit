@@ -26,6 +26,7 @@
 
 typedef struct log_format_values_s {
     const char *timestamp;
+    const char *timestamp_iso;
     const char *app_name;
     const char *device_name;
     const char *message;
@@ -33,4 +34,5 @@ typedef struct log_format_values_s {
 
 char *log_format_render(const char *format, const log_format_values_t *values);
 char *log_format_current_timestamp(void);
+char *log_format_current_timestamp_iso(void);
 char *log_format_resolve_device_name(void);

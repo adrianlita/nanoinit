@@ -28,6 +28,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 
 static int log_format_append(char **buffer, size_t *length, size_t *capacity, const char *value, size_t value_size);
@@ -114,6 +115,55 @@ char *log_format_current_timestamp(void) {
     return timestamp;
 }
 
+char *log_format_current_timestamp_iso(void) {
+    struct timeval tv;
+    if(gettimeofday(&tv, 0) != 0) {
+        memset(&tv, 0, sizeof(tv));
+    }
+
+    time_t seconds = tv.tv_sec;
+    struct tm tm_utc;
+    if(gmtime_r(&seconds, &tm_utc) == 0) {
+        memset(&tm_utc, 0, sizeof(tm_utc));
+    }
+
+    unsigned int ts_msec = (unsigned int)(tv.tv_usec) / 1000;
+    int size = snprintf(
+        0,
+        0,
+        "%04d-%02d-%02dT%02d:%02d:%02d.%03uZ",
+        tm_utc.tm_year + 1900,
+        tm_utc.tm_mon + 1,
+        tm_utc.tm_mday,
+        tm_utc.tm_hour,
+        tm_utc.tm_min,
+        tm_utc.tm_sec,
+        ts_msec
+    );
+    if(size < 0) {
+        return 0;
+    }
+
+    char *timestamp = (char *)malloc((size_t)size + 1);
+    if(timestamp == 0) {
+        return 0;
+    }
+
+    snprintf(
+        timestamp,
+        (size_t)size + 1,
+        "%04d-%02d-%02dT%02d:%02d:%02d.%03uZ",
+        tm_utc.tm_year + 1900,
+        tm_utc.tm_mon + 1,
+        tm_utc.tm_mday,
+        tm_utc.tm_hour,
+        tm_utc.tm_min,
+        tm_utc.tm_sec,
+        ts_msec
+    );
+    return timestamp;
+}
+
 char *log_format_resolve_device_name(void) {
     char *env_device_name = getenv("DEVICE_NAME");
     if((env_device_name != 0) && (env_device_name[0] != 0)) {
@@ -164,6 +214,10 @@ static const char *log_format_placeholder_value(const char *name, size_t name_si
 
     if((name_size == strlen("timestamp")) && (strncmp(name, "timestamp", name_size) == 0)) {
         return values->timestamp ? values->timestamp : "";
+    }
+
+    if((name_size == strlen("timestampISO")) && (strncmp(name, "timestampISO", name_size) == 0)) {
+        return values->timestamp_iso ? values->timestamp_iso : "";
     }
 
     if((name_size == strlen("app-name")) && (strncmp(name, "app-name", name_size) == 0)) {

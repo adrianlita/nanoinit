@@ -336,6 +336,8 @@ Supported placeholders:
 
 - `{message}`: the formatted log message
 - `{timestamp}`: current Unix timestamp with millisecond precision
+- `{timestampISO}`: current UTC timestamp in ISO-8601 format, for example
+  `2026-02-03T11:23:56.123Z`
 - `{app-name}`: `nanoinit` for nanoinit's own logs
 - `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
 
@@ -408,6 +410,8 @@ It supports the same placeholders as `NI_LOG_FORMAT`:
 
 - `{message}`: the formatted log message
 - `{timestamp}`: current Unix timestamp with millisecond precision
+- `{timestampISO}`: current UTC timestamp in ISO-8601 format, for example
+  `2026-02-03T11:23:56.123Z`
 - `{app-name}`: `nanoinit` for nanoinit's own logs
 - `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
 
@@ -483,6 +487,8 @@ passthrough output.
 Supported placeholders:
 
 - `{timestamp}`: current Unix timestamp with millisecond precision
+- `{timestampISO}`: current UTC timestamp in ISO-8601 format, for example
+  `2026-02-03T11:23:56.123Z`
 - `{app-name}`: the application name from the config object
 - `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
 - `{message}`: empty for prefixes

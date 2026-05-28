@@ -24,7 +24,7 @@ class LogPrefixTest(NanoInitTestCase):
                     "stderr": str(stderr_log),
                     "stdout_passthrough": True,
                     "stderr_passthrough": True,
-                    "prefix_logs": "[{device-name}:{app-name}:{timestamp}] ",
+                    "prefix_logs": "[{device-name}:{app-name}:{timestampISO}] ",
                 }
             },
         )
@@ -35,10 +35,11 @@ class LogPrefixTest(NanoInitTestCase):
 
         stdout_content = stdout_log.read_text(errors="replace")
         stderr_content = stderr_log.read_text(errors="replace")
-        self.assertRegex(stdout_content, r"\[prefix-device:prefix-files:[0-9]+\.[0-9]{3}\] out-one\n")
-        self.assertRegex(stdout_content, r"\[prefix-device:prefix-files:[0-9]+\.[0-9]{3}\] out-two\n")
-        self.assertRegex(stderr_content, r"\[prefix-device:prefix-files:[0-9]+\.[0-9]{3}\] err-one\n")
-        self.assertRegex(stderr_content, r"\[prefix-device:prefix-files:[0-9]+\.[0-9]{3}\] err-two\n")
+        iso_pattern = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z"
+        self.assertRegex(stdout_content, rf"\[prefix-device:prefix-files:{iso_pattern}\] out-one\n")
+        self.assertRegex(stdout_content, rf"\[prefix-device:prefix-files:{iso_pattern}\] out-two\n")
+        self.assertRegex(stderr_content, rf"\[prefix-device:prefix-files:{iso_pattern}\] err-one\n")
+        self.assertRegex(stderr_content, rf"\[prefix-device:prefix-files:{iso_pattern}\] err-two\n")
 
         self.wait_for_contains(self.tmp / "nanoinit.stdout", "] out-two")
         self.wait_for_contains(self.tmp / "nanoinit.stderr", "] err-two")

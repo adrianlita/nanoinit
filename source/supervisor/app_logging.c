@@ -342,14 +342,17 @@ static int supervisor_prefix_output_stream(supervisor_output_stream_t *stream, c
 
 static int supervisor_append_output_prefix(supervisor_output_stream_t *stream, char **buffer, size_t *length, size_t *capacity) {
     char *timestamp = log_format_current_timestamp();
+    char *timestamp_iso = log_format_current_timestamp_iso();
     log_format_values_t values = {
         .timestamp = timestamp ? timestamp : "",
+        .timestamp_iso = timestamp_iso ? timestamp_iso : "",
         .app_name = stream->application_name,
         .device_name = stream->prefix_device_name ? stream->prefix_device_name : "",
         .message = "",
     };
 
     char *prefix = log_format_render(stream->prefix_format, &values);
+    free(timestamp_iso);
     free(timestamp);
     if(prefix == 0) {
         return -1;
