@@ -39,3 +39,53 @@ class LogPathTest(NanoInitTestCase):
 
         content = log_file.read_text(errors="replace")
         self.assertIn("device=test-device app=nanoinit ts=", content)
+
+    def test_log_format_can_be_set_with_config(self):
+        marker = self.tmp / "config-log-format.marker"
+        log_file = self.tmp / "config-log-format.log"
+        app = self.write_marker_script("config-log-format-app.sh", marker, "config-log-format")
+        config = self.write_config(
+            "config.json",
+            {
+                "config-log-format": {"path": str(app)},
+                "ni_log_format": "config={app-name} device={device-name} msg={message}",
+            },
+        )
+
+        self.start_nanoinit(
+            "-c",
+            config,
+            f"--log-path={log_file}",
+            "-v0",
+            env={"DEVICE_NAME": "config-device"},
+        )
+        self.wait_for_contains(marker, "config-log-format")
+        self.wait_for_contains(log_file, "msg=supervisor_start() successfully spawned")
+
+        content = log_file.read_text(errors="replace")
+        self.assertIn("config=nanoinit device=config-device msg=", content)
+
+    def test_environment_log_format_overrides_config(self):
+        marker = self.tmp / "env-over-config-log-format.marker"
+        log_file = self.tmp / "env-over-config-log-format.log"
+        app = self.write_marker_script("env-over-config-log-format-app.sh", marker, "env-over-config-log-format")
+        config = self.write_config(
+            "config.json",
+            {
+                "ni_log_format": "config={message}",
+                "env-over-config-log-format": {"path": str(app)},
+            },
+        )
+
+        self.start_nanoinit(
+            "-c",
+            config,
+            f"--log-path={log_file}",
+            "-v0",
+            env={"NI_LOG_FORMAT": "env={message}"},
+        )
+        self.wait_for_contains(marker, "env-over-config-log-format")
+        self.wait_for_contains(log_file, "env=supervisor_start() successfully spawned")
+
+        content = log_file.read_text(errors="replace")
+        self.assertNotIn("config=supervisor_start()", content)

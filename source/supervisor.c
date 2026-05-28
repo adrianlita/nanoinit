@@ -144,6 +144,7 @@ supervisor_start_begin:
 
         config_free();
         config = config_init(arguments->config_file, arguments->config_json_object);
+        log_apply_config_format(config ? config->ni_log_format : 0);
         if(config == 0) {
             log_ni_error("supervisor_start() could not read new config; using zero-config");
         }

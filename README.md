@@ -327,7 +327,8 @@ namespace.
 
 ### `NI_LOG_FORMAT`
 
-Sets the format for nanoinit's own log lines.
+Sets the format for nanoinit's own log lines. This overrides `ni_log_format`
+from the configuration file.
 
 Default: `{message}`.
 
@@ -348,7 +349,8 @@ Unknown placeholders are left unchanged.
 
 ### `DEVICE_NAME`
 
-Sets the `{device-name}` value used by `NI_LOG_FORMAT`.
+Sets the `{device-name}` value used by `NI_LOG_FORMAT`, `ni_log_format`, and
+application `prefix_logs`.
 
 When this variable is omitted or empty, nanoinit uses the hostname reported by
 the container or pod.
@@ -359,7 +361,8 @@ The configuration file is JSON parsed by the bundled `edJSON` parser. JSON
 comments are supported.
 
 At the selected configuration object, every property name is treated as an
-application name. Each application value must be an object.
+application name, except for the reserved global option `ni_log_format`. Each
+application value must be an object.
 
 Minimal config:
 
@@ -375,6 +378,7 @@ Full application entry:
 
 ```json
 {
+    "ni_log_format": "[{timestamp}] [{device-name}] [{app-name}] {message}",
     "app": {
         "path": "/usr/local/bin/app",
         "args": ["--listen", "0.0.0.0:8080"],
@@ -392,6 +396,24 @@ Full application entry:
     }
 }
 ```
+
+### Global fields
+
+`ni_log_format`
+
+Optional string. Default: `{message}`.
+
+Sets the format for nanoinit's own log lines from the loaded configuration file.
+It supports the same placeholders as `NI_LOG_FORMAT`:
+
+- `{message}`: the formatted log message
+- `{timestamp}`: current Unix timestamp with millisecond precision
+- `{app-name}`: `nanoinit` for nanoinit's own logs
+- `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
+
+`NI_LOG_FORMAT` takes precedence when both are configured. The config value is
+applied after the config file is parsed, so parse errors emitted while loading
+the file still use the default or environment-provided format.
 
 ### Application fields
 
@@ -715,7 +737,9 @@ Use `--verbose` to control how much nanoinit prints to the terminal. Use
 `--log-path` to also write nanoinit's own logs to a file.
 
 By default, nanoinit's own logs contain only the log message. Use
-`NI_LOG_FORMAT` to include fields such as timestamp, app name, or device name.
+`ni_log_format` in the config file or `NI_LOG_FORMAT` in the environment to
+include fields such as timestamp, app name, or device name. `NI_LOG_FORMAT`
+takes precedence over the config value.
 
 Use `stdout` and `stderr` in the config file to redirect application streams.
 Relative output paths are resolved relative to nanoinit's current working

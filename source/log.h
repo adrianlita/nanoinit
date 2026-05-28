@@ -31,6 +31,7 @@
 #define LOG_LOG         2
 
 int log_init(int verbosity_level, const char *log_path);
+void log_apply_config_format(const char *config_format);
 void log_free(void);
 
 //don't use directly; use macros defined below

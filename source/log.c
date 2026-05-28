@@ -36,6 +36,7 @@ static int app_verbosity_level = 0;
 static FILE *log_file = 0;
 static char *log_format = 0;
 static char *log_device_name = 0;
+static int log_format_from_env = 0;
 
 #define LOG_DEFAULT_FORMAT "{message}"
 #define LOG_APP_NAME "nanoinit"
@@ -52,6 +53,7 @@ int log_init(int verbosity_level, const char *log_path) {
     }
 
     char *format_env = getenv("NI_LOG_FORMAT");
+    log_format_from_env = format_env != 0;
     log_format = strdup(format_env ? format_env : LOG_DEFAULT_FORMAT);
     log_device_name = log_format_resolve_device_name();
 
@@ -72,6 +74,22 @@ int log_init(int verbosity_level, const char *log_path) {
     return 0;
 }
 
+void log_apply_config_format(const char *config_format) {
+    if(log_format_from_env) {
+        return;
+    }
+
+    const char *format = config_format ? config_format : LOG_DEFAULT_FORMAT;
+    char *format_copy = strdup(format);
+    if(format_copy == 0) {
+        log_ni_error("log_apply_config_format() could not allocate log format");
+        return;
+    }
+
+    free(log_format);
+    log_format = format_copy;
+}
+
 void log_free(void) {
     if(log_file) {
         fclose(log_file);
@@ -85,6 +103,7 @@ void log_free(void) {
 
     instances--;
     app_verbosity_level = 0;
+    log_format_from_env = 0;
 }
 
 void _log_add(int verbosity_level, const char *format, ...) {

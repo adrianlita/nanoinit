@@ -74,6 +74,7 @@ int main(int argc, char **argv) {
 
     //load config from config file; config file may not be nanoinit-specific, 
     config = config_init(arguments->config_file, arguments->config_json_object);
+    log_apply_config_format(config ? config->ni_log_format : 0);
     if(config == 0) {
         log_ni_error("config_init() failed; using zero-config");
     }

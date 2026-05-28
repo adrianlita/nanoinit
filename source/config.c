@@ -209,6 +209,8 @@ void config_free() {
     free(config.applications);
     config.applications = 0;
     config.application_count = 0;
+    free(config.ni_log_format);
+    config.ni_log_format = 0;
 }
 
 static int edJSON_callback(const edJSON_path_t *path, size_t path_size, edJSON_value_t value, void *private) {
@@ -258,6 +260,36 @@ switch_config_message_state:
             if(rc < EDJSON_SUCCESS) {
                 config_message->return_code = 4;
                 return 1;
+            }
+
+            if(strcmp(current_value, "ni_log_format") == 0) {
+                if(path_size != (component + 1)) {
+                    log_ni_error("edJSON_callback() ni_log_format should not have child objects");
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(value.value_type != EDJSON_VT_STRING) {
+                    log_ni_error("edJSON_callback() ni_log_format value type should be string");
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                rc = edJSON_string_unescape(current_value, JSON_PARSE_BUFFER_SIZE, value.value.string.value, value.value.string.value_size);
+                if(rc < EDJSON_SUCCESS) {
+                    config_message->return_code = 4;
+                    return 1;
+                }
+
+                char *ni_log_format = strdup(current_value);
+                if(ni_log_format == 0) {
+                    log_ni_error("edJSON_callback() bad memory allocation");
+                    config_message->return_code = 3;
+                    return 1;
+                }
+                free(config.ni_log_format);
+                config.ni_log_format = ni_log_format;
+                return 0;
             }
 
             if(strcmp(config_message->current_app, current_value) != 0) {

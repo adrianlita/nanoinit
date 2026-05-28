@@ -44,6 +44,7 @@ The suite covers:
 - spawn failure logging
 - `SIGUSR1` config reload
 - nanoinit `--log-path`
+- nanoinit `ni_log_format`
 - application `stdout` / `stderr` log rotation
 - application `stdout` / `stderr` `prefix_logs`
 - newline-boundary rotation behavior
