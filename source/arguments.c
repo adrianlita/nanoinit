@@ -1,7 +1,7 @@
 /**
  * MIT License
  * 
- * Copyright (c) 2022 AXIPlus / Adrian Lita / Alex Stancu - www.axiplus.com
+ * Copyright (c) 2022-2026 AXIPlus / Adrian Lita / Alex Stancu - www.axiplus.com
  * 
  * Permission is hereby granted, free of charge, to any person obtaining a copy
  * of this software and associated documentation files (the "Software"), to deal
@@ -40,7 +40,7 @@ static nanoinit_arguments_t arguments = {0};
 
 const char *argp_program_version = "nanoinit v0.0.1 build 123451234";
 const char *argp_program_bug_address = "<adrian@axiplus.com>";
-static char doc[] = "nanoinit - for documentation and usage check https://github.com/AXIPlus/nanoinit";
+static char doc[] = "nanoinit - for documentation and usage check https://github.com/adrianlita/nanoinit";
 static char args_doc[] = "[status APP | start APP | stop APP | list | ls]";
 
 static struct argp_option options[] = {

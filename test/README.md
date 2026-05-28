@@ -1,3 +1,8 @@
+<!--
+MIT License
+Copyright (c) 2022-2026 AXIPlus / Adrian Lita / Alex Stancu - www.axiplus.com
+-->
+
 # nanoinit tests
 
 Run the full test suite from the repository root:

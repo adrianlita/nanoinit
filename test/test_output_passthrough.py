@@ -1,3 +1,6 @@
+# MIT License
+# Copyright (c) 2022-2026 AXIPlus / Adrian Lita / Alex Stancu - www.axiplus.com
+#
 from common import NanoInitTestCase
 
 
