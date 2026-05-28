@@ -22,18 +22,27 @@
  * SOFTWARE.
  * */
 
-#define _GNU_SOURCE         //for asprintf
+#define _GNU_SOURCE         //for vasprintf
 
 #include "log.h"
+#include "log_formatter.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdarg.h>
-#include <sys/time.h>
 
 static int instances = 0;
 static int app_verbosity_level = 0;
 static FILE *log_file = 0;
+static char *log_format = 0;
+static char *log_device_name = 0;
+
+#define LOG_DEFAULT_FORMAT "{message}"
+#define LOG_APP_NAME "nanoinit"
+
+static const char *log_get_format(void);
+static const char *log_get_device_name(void);
+static void log_write_line(FILE *output, const char *line);
 
 int log_init(int verbosity_level, const char *log_path) {
     instances++;
@@ -41,6 +50,10 @@ int log_init(int verbosity_level, const char *log_path) {
         log_ni_error("log_init() called too many times");
         return -1;
     }
+
+    char *format_env = getenv("NI_LOG_FORMAT");
+    log_format = strdup(format_env ? format_env : LOG_DEFAULT_FORMAT);
+    log_device_name = log_format_resolve_device_name();
 
     if((verbosity_level < 0) || (verbosity_level > 2)) {
         log_ni_error("log_init() invalid verbosity level: %d", verbosity_level);
@@ -65,6 +78,11 @@ void log_free(void) {
         log_file = 0;
     }
 
+    free(log_format);
+    log_format = 0;
+    free(log_device_name);
+    log_device_name = 0;
+
     instances--;
     app_verbosity_level = 0;
 }
@@ -80,43 +98,42 @@ void _log_add(int verbosity_level, const char *format, ...) {
         return;
     }
 
-    
-    struct timeval tv;
-    int result = gettimeofday(&tv, 0);
-    if(result != 0) {
-        static int shown = 0;
-        if(shown == 0) {
-            log_ni_error("_log_add() could not get time");  //show this just one time to prevent recursion
-            shown = 1;
-        }
-        void *result = memset(&tv, 0, sizeof(tv));
-        (void)result;
-    }
-
-    unsigned long long ts_sec = (unsigned long long)(tv.tv_sec);
-    unsigned int ts_msec = (unsigned int)(tv.tv_usec) / 1000;
-    
-    char *format_with_timestamp = 0;
-    result = asprintf(&format_with_timestamp, "[%llu.%03u] [nanoinit] %s\n", ts_sec, ts_msec, format);
-    (void)result;
-    
-    if(format_with_timestamp == 0) {
-        //asprintf failed, fallback
-        format_with_timestamp = (char *)format;
-        if(verbosity_level != 0) {  //prevent recursion
-            log_ni_error("_log_add() asprintf() failed to generate string");
-        }
-    }
-
-    
+    char *message = 0;
     va_list arg;
+    va_start(arg, format);
+    int result = vasprintf(&message, format, arg);
+    va_end(arg);
+    (void)result;
+
+    if(message == 0) {
+        message = strdup(format);
+        if(message == 0) {
+            return;
+        }
+    }
+
+    char *timestamp = log_format_current_timestamp();
+    log_format_values_t values = {
+        .timestamp = timestamp ? timestamp : "",
+        .app_name = LOG_APP_NAME,
+        .device_name = log_get_device_name(),
+        .message = message,
+    };
+
+    char *rendered_message = log_format_render(log_get_format(), &values);
+    if(rendered_message == 0) {
+        rendered_message = strdup(message);
+        if(rendered_message == 0) {
+            free(timestamp);
+            free(message);
+            return;
+        }
+    }
 
     //log to file
     if(log_file) {
-        va_start(arg, format);
-        vfprintf(log_file, format_with_timestamp, arg);
+        log_write_line(log_file, rendered_message);
         fflush(log_file);
-        va_end(arg);
     }
 
     //print
@@ -126,15 +143,23 @@ void _log_add(int verbosity_level, const char *format, ...) {
             output = stdout;
         }
 
-        va_start(arg, format);
-        vfprintf(output, format_with_timestamp, arg);
-        va_end(arg);
-        if(format_with_timestamp == format) {
-            fprintf(output, "\n"); //newline is missing
-        }
+        log_write_line(output, rendered_message);
     }
 
-    if(format_with_timestamp != format) {
-        free(format_with_timestamp);
-    }
+    free(rendered_message);
+    free(timestamp);
+    free(message);
+}
+
+static const char *log_get_format(void) {
+    return log_format ? log_format : LOG_DEFAULT_FORMAT;
+}
+
+static const char *log_get_device_name(void) {
+    return log_device_name ? log_device_name : "";
+}
+
+static void log_write_line(FILE *output, const char *line) {
+    fputs(line, output);
+    fputc('\n', output);
 }

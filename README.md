@@ -321,6 +321,34 @@ Use this when the default socket path is not writable, when you want the socket
 under `/run`, or when more than one `nanoinit` supervisor runs in the same
 namespace.
 
+### `NI_LOG_FORMAT`
+
+Sets the format for nanoinit's own log lines.
+
+Default: `{message}`.
+
+Supported placeholders:
+
+- `{message}`: the formatted log message
+- `{timestamp}`: current Unix timestamp with millisecond precision
+- `{app-name}`: `nanoinit` for nanoinit's own logs
+- `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
+
+Example:
+
+```sh
+NI_LOG_FORMAT="[{timestamp}] [{device-name}] [{app-name}] {message}" nanoinit -c /etc/nanoinit/config.json
+```
+
+Unknown placeholders are left unchanged.
+
+### `DEVICE_NAME`
+
+Sets the `{device-name}` value used by `NI_LOG_FORMAT`.
+
+When this variable is omitted or empty, nanoinit uses the hostname reported by
+the container or pod.
+
 ## Configuration file
 
 The configuration file is JSON parsed by the bundled `edJSON` parser. JSON
@@ -648,6 +676,9 @@ There are two kinds of output to consider:
 Use `--verbose` to control how much nanoinit prints to the terminal. Use
 `--log-path` to also write nanoinit's own logs to a file.
 
+By default, nanoinit's own logs contain only the log message. Use
+`NI_LOG_FORMAT` to include fields such as timestamp, app name, or device name.
+
 Use `stdout` and `stderr` in the config file to redirect application streams.
 Relative output paths are resolved relative to nanoinit's current working
 directory.
@@ -899,6 +930,7 @@ kill -USR1 <nanoinit-pid>
 |   |-- config.c
 |   |-- control.c
 |   |-- log.c
+|   |-- log_formatter.c
 |   |-- main.c
 |   |-- nanoinit.c
 |   |-- supervisor.c
@@ -928,6 +960,7 @@ Important source files:
 - `source/supervisor/internal.h`: internal supervisor shared types and functions
 - `source/nanoinit.c`: reload helper
 - `source/log.c`: nanoinit logging
+- `source/log_formatter.c`: reusable log line formatter
 
 ## License
 
