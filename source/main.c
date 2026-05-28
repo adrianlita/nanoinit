@@ -39,6 +39,12 @@ int main(int argc, char **argv) {
     //load and parse arguments; if any argument is not present, a default value is assumed
     arguments = arguments_init(argc, argv);
 
+    if((arguments->special_mode == NI_NO_SPECIAL_MODE) && control_socket_is_active(arguments->control_socket_path)) {
+        arguments_print_help();
+        arguments_free();
+        return 0;
+    }
+
     //initialize logger based on verbosity_level and log_path returned by arguments
     int rc = log_init(arguments->verbosity_level, arguments->log_path);
     if(rc != 0) {

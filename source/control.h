@@ -26,4 +26,5 @@
 
 #include "arguments.h"
 
+int control_socket_is_active(const char *path);
 int control_send_command(const nanoinit_arguments_t *arguments);

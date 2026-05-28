@@ -30,15 +30,37 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/select.h>
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
 
+#define SUPERVISOR_RESTART_DELAY_SECONDS 1
+#define SUPERVISOR_CHILD_ERROR_WAIT_MS 100
+
+typedef enum supervisor_child_error_stage_e {
+    SUPERVISOR_CHILD_ERROR_PREPARE_ARGS = 1,
+    SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT,
+    SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR,
+    SUPERVISOR_CHILD_ERROR_EXEC,
+} supervisor_child_error_stage_t;
+
+typedef struct supervisor_child_error_s {
+    int stage;
+    int error_code;
+} supervisor_child_error_t;
+
 static void supervisor_log_process_status(const char *name, pid_t pid, int status, int app_error);
+static int supervisor_create_child_error_pipe(int error_pipe[2]);
+static void supervisor_close_pipe(int pipe_fds[2]);
+static void supervisor_child_report_error(int error_pipe_fd, supervisor_child_error_stage_t stage, int error_code);
+static int supervisor_read_child_error(int error_pipe_fd, supervisor_child_error_t *child_error);
+static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error);
 
 supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
     int stdout_pipe[2] = { -1, -1 };
     int stderr_pipe[2] = { -1, -1 };
+    int child_error_pipe[2] = { -1, -1 };
     int stdout_is_file = supervisor_file_output_configured(scb->application->stdout_path);
     int stderr_is_file = supervisor_file_output_configured(scb->application->stderr_path);
     int pipe_stdout = supervisor_output_stream_configured(
@@ -87,25 +109,28 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         return SUPERVISOR_SPAWN_ERROR;
     }
 
+    if(supervisor_create_child_error_pipe(child_error_pipe) != 0) {
+        log_ni_error("supervisor_spawn() could not create child error pipe for app %s", scb->application->name);
+        supervisor_close_pipe(stdout_pipe);
+        supervisor_close_pipe(stderr_pipe);
+        return SUPERVISOR_SPAWN_ERROR;
+    }
+
     scb->running = 1;
     scb->pid = fork();
     if(scb->pid == -1) {
         log_ni_error("supervisor_spawn() fork failed");
         scb->running = 0;
         scb->started_at = 0;
-        if(stdout_pipe[0] >= 0) {
-            close(stdout_pipe[0]);
-            close(stdout_pipe[1]);
-        }
-        if(stderr_pipe[0] >= 0) {
-            close(stderr_pipe[0]);
-            close(stderr_pipe[1]);
-        }
+        supervisor_close_pipe(stdout_pipe);
+        supervisor_close_pipe(stderr_pipe);
+        supervisor_close_pipe(child_error_pipe);
         return SUPERVISOR_SPAWN_ERROR;
     }
 
     if(scb->pid == 0) {
         //child process
+        close(child_error_pipe[0]);
         
         //unregister signals from parent
         signal(SIGINT, SIG_DFL);
@@ -118,24 +143,39 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         if(pipe_stdout) {
             close(stdout_pipe[0]);
             if(dup2(stdout_pipe[1], STDOUT_FILENO) < 0) {
-                log_ni_error("supervisor_spawn() could not redirect stdout pipe for app %s", scb->application->name);
+                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, errno);
+                _exit(255);
             }
             close(stdout_pipe[1]);
         }
         else {
             char *stdout_path = scb->application->stdout_path ? strdup(scb->application->stdout_path) : 0;
+            if((scb->application->stdout_path != 0) && (stdout_path == 0)) {
+                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, ENOMEM);
+                _exit(255);
+            }
+
             if(stdout_path && stdout_path[0] == 0) {
                 free(stdout_path);
                 stdout_path = strdup("/dev/null");
+                if(stdout_path == 0) {
+                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, ENOMEM);
+                    _exit(255);
+                }
             }
 
             if(stdout_path) {
                 int stdout_fd = open(stdout_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if(stdout_fd < 0) {
-                    log_ni_error("supervisor_spawn() could not open %s for redirecting stdout for app %s", stdout_path, scb->application->name);
+                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, errno);
+                    _exit(255);
                 }
                 else {
-                    dup2(stdout_fd, STDOUT_FILENO);
+                    if(dup2(stdout_fd, STDOUT_FILENO) < 0) {
+                        supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, errno);
+                        close(stdout_fd);
+                        _exit(255);
+                    }
                     close(stdout_fd);
                 }
                 free(stdout_path);
@@ -146,24 +186,39 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         if(pipe_stderr) {
             close(stderr_pipe[0]);
             if(dup2(stderr_pipe[1], STDERR_FILENO) < 0) {
-                log_ni_error("supervisor_spawn() could not redirect stderr pipe for app %s", scb->application->name);
+                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, errno);
+                _exit(255);
             }
             close(stderr_pipe[1]);
         }
         else {
             char *stderr_path = scb->application->stderr_path ? strdup(scb->application->stderr_path) : 0;
+            if((scb->application->stderr_path != 0) && (stderr_path == 0)) {
+                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, ENOMEM);
+                _exit(255);
+            }
+
             if(stderr_path && stderr_path[0] == 0) {
                 free(stderr_path);
                 stderr_path = strdup("/dev/null");
+                if(stderr_path == 0) {
+                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, ENOMEM);
+                    _exit(255);
+                }
             }
 
             if(stderr_path) {
                 int stderr_fd = open(stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
                 if(stderr_fd < 0) {
-                    log_ni_error("supervisor_spawn() could not open %s for redirecting stderr for app %s", stderr_path, scb->application->name);
+                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, errno);
+                    _exit(255);
                 }
                 else {
-                    dup2(stderr_fd, STDERR_FILENO);
+                    if(dup2(stderr_fd, STDERR_FILENO) < 0) {
+                        supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, errno);
+                        close(stderr_fd);
+                        _exit(255);
+                    }
                     close(stderr_fd);
                 }
                 free(stderr_path);
@@ -173,28 +228,28 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         //copy path and arguments as they will be freed
         char *app_path = strdup(scb->application->path);
         if(app_path == 0) {
-            log_ni_error("supervisor_spawn() could not allocate memory for application path");
-            exit(1);
+            supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_PREPARE_ARGS, ENOMEM);
+            _exit(255);
         }
 
         int arg_count = scb->application->arg_count + 2;
         char **app_args = (char **)malloc(sizeof(char*) * arg_count);
         if(app_args == 0) {
-            log_ni_error("supervisor_spawn() could not allocate memory for application arguments vector");
-            exit(1);
+            supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_PREPARE_ARGS, ENOMEM);
+            _exit(255);
         }
         app_args[0] = strdup(app_path);
         if(app_args[0] == 0) {
-            log_ni_error("supervisor_spawn() could not allocate memory for application first argument (path)");
-            exit(1);
+            supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_PREPARE_ARGS, ENOMEM);
+            _exit(255);
         }
         app_args[arg_count - 1] = 0;
 
         for(int i = 0; i < scb->application->arg_count; i++) {
             app_args[i + 1] = strdup(scb->application->args[i]);
             if(app_args[i + 1] == 0) {
-                log_ni_error("supervisor_spawn() could not allocate memory for application argument %d", i);
-                exit(1);
+                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_PREPARE_ARGS, ENOMEM);
+                _exit(255);
             }
         }
 
@@ -211,7 +266,7 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         //execute
         int result = execv(app_path, app_args);
         if(result != 0) {
-            log_ni_error("supervisor_spawn() failed to spawn process %s", app_path);
+            supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_EXEC, errno);
         }
 
         //free all used memory
@@ -222,8 +277,11 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         free(app_args);
 
         //gracefully stop fork
-        _exit(result);
+        _exit(255);
     }
+
+    close(child_error_pipe[1]);
+    child_error_pipe[1] = -1;
 
     if(pipe_stdout) {
         int passthrough_fd = -1;
@@ -274,6 +332,17 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
     }
 
     scb->started_at = time(0);
+
+    supervisor_child_error_t child_error;
+    if(supervisor_read_child_error(child_error_pipe[0], &child_error)) {
+        supervisor_log_child_error(scb, &child_error);
+        close(child_error_pipe[0]);
+        child_error_pipe[0] = -1;
+        return SUPERVISOR_SPAWN_CHILD_ERROR;
+    }
+
+    close(child_error_pipe[0]);
+    child_error_pipe[0] = -1;
     return SUPERVISOR_SPAWN_STARTED;
 }
 
@@ -303,13 +372,7 @@ void supervisor_reap_children(void) {
                     supervisor_close_output_stream(&scb[i].stderr_stream);
 
                     if(scb[i].application->autorestart && scb[i].desired_running && !supervisor_got_signal_stop) {
-                        supervisor_spawn_result_t spawn_result = supervisor_spawn(&scb[i]);
-                        if(spawn_result == SUPERVISOR_SPAWN_STARTED) {
-                            log("supervisor_start() respawned %s (pid=%d)", scb[i].application->name, (int)scb[i].pid);
-                        }
-                        else if(spawn_result == SUPERVISOR_SPAWN_ERROR) {
-                            log_app_error("supervisor_start() failed to spawn '%s'", scb[i].application->name);
-                        }
+                        supervisor_schedule_restart(&scb[i]);
                     }
 
                     break;
@@ -324,6 +387,32 @@ void supervisor_reap_children(void) {
                 log_ni_error("supervisor_reap_children() waitpid() returned invalid value");
             }
             break;
+        }
+    }
+}
+
+void supervisor_start_pending_restarts(void) {
+    time_t now = time(0);
+
+    for(int i = 0; i < scb_count; i++) {
+        if(!scb[i].restart_pending || scb[i].running || !scb[i].desired_running || !scb[i].application->autorestart || supervisor_got_signal_stop) {
+            continue;
+        }
+
+        if(now < scb[i].restart_at) {
+            continue;
+        }
+
+        scb[i].restart_pending = 0;
+        scb[i].restart_at = 0;
+
+        supervisor_spawn_result_t spawn_result = supervisor_spawn(&scb[i]);
+        if(spawn_result == SUPERVISOR_SPAWN_STARTED) {
+            log("supervisor_start() respawned %s (pid=%d)", scb[i].application->name, (int)scb[i].pid);
+        }
+        else if(spawn_result == SUPERVISOR_SPAWN_ERROR) {
+            log_app_error("supervisor_start() failed to spawn '%s'", scb[i].application->name);
+            supervisor_schedule_restart(&scb[i]);
         }
     }
 }
@@ -357,5 +446,126 @@ static void supervisor_log_process_status(const char *name, pid_t pid, int statu
         else {
             log("supervisor_start() process %s (pid=%d) changed state with status %d", name, (int)pid, status);
         }
+    }
+}
+
+void supervisor_schedule_restart(supervisor_control_block_t *scb) {
+    scb->restart_pending = 1;
+    scb->restart_at = time(0) + SUPERVISOR_RESTART_DELAY_SECONDS;
+    log("supervisor_start() scheduled restart for %s in %ds", scb->application->name, SUPERVISOR_RESTART_DELAY_SECONDS);
+}
+
+static int supervisor_create_child_error_pipe(int error_pipe[2]) {
+    if(pipe(error_pipe) != 0) {
+        return -1;
+    }
+
+    if(fcntl(error_pipe[1], F_SETFD, FD_CLOEXEC) != 0) {
+        supervisor_close_pipe(error_pipe);
+        return -1;
+    }
+
+    return 0;
+}
+
+static void supervisor_close_pipe(int pipe_fds[2]) {
+    if(pipe_fds[0] >= 0) {
+        close(pipe_fds[0]);
+        pipe_fds[0] = -1;
+    }
+
+    if(pipe_fds[1] >= 0) {
+        close(pipe_fds[1]);
+        pipe_fds[1] = -1;
+    }
+}
+
+static void supervisor_child_report_error(int error_pipe_fd, supervisor_child_error_stage_t stage, int error_code) {
+    supervisor_child_error_t child_error = {
+        .stage = stage,
+        .error_code = error_code,
+    };
+
+    signal(SIGPIPE, SIG_IGN);
+
+    const char *buffer = (const char *)&child_error;
+    size_t written = 0;
+    while(written < sizeof(child_error)) {
+        ssize_t write_result = write(error_pipe_fd, buffer + written, sizeof(child_error) - written);
+        if(write_result < 0) {
+            if(errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if(write_result == 0) {
+            break;
+        }
+        written += (size_t)write_result;
+    }
+
+    close(error_pipe_fd);
+}
+
+static int supervisor_read_child_error(int error_pipe_fd, supervisor_child_error_t *child_error) {
+    if((error_pipe_fd < 0) || (child_error == 0)) {
+        return 0;
+    }
+
+    fd_set read_fds;
+    struct timeval timeout;
+
+    while(1) {
+        FD_ZERO(&read_fds);
+        FD_SET(error_pipe_fd, &read_fds);
+        timeout.tv_sec = SUPERVISOR_CHILD_ERROR_WAIT_MS / 1000;
+        timeout.tv_usec = (SUPERVISOR_CHILD_ERROR_WAIT_MS % 1000) * 1000;
+
+        int select_result = select(error_pipe_fd + 1, &read_fds, 0, 0, &timeout);
+        if(select_result < 0) {
+            if(errno == EINTR) {
+                continue;
+            }
+            return 0;
+        }
+
+        if(select_result == 0) {
+            return 0;
+        }
+
+        break;
+    }
+
+    ssize_t read_result = read(error_pipe_fd, child_error, sizeof(*child_error));
+    return read_result == (ssize_t)sizeof(*child_error);
+}
+
+static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error) {
+    const char *name = scb->application->name ? scb->application->name : "(unknown)";
+    const char *path = scb->application->path ? scb->application->path : "(null)";
+    const char *error = child_error->error_code > 0 ? strerror(child_error->error_code) : "unknown error";
+
+    switch(child_error->stage) {
+        case SUPERVISOR_CHILD_ERROR_PREPARE_ARGS:
+            log_ni_error("supervisor_spawn() failed to prepare arguments for app %s (%s): %s", name, path, error);
+            break;
+
+        case SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT: {
+            const char *target = scb->application->stdout_path ? scb->application->stdout_path : "stdout pipe";
+            log_ni_error("supervisor_spawn() failed to redirect stdout for app %s to %s: %s", name, target, error);
+        } break;
+
+        case SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR: {
+            const char *target = scb->application->stderr_path ? scb->application->stderr_path : "stderr pipe";
+            log_ni_error("supervisor_spawn() failed to redirect stderr for app %s to %s: %s", name, target, error);
+        } break;
+
+        case SUPERVISOR_CHILD_ERROR_EXEC:
+            log_ni_error("supervisor_spawn() failed to spawn process %s for app %s: %s", path, name, error);
+            break;
+
+        default:
+            log_ni_error("supervisor_spawn() failed to prepare child process %s for app %s: %s", path, name, error);
+            break;
     }
 }

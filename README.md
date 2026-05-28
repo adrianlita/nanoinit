@@ -47,7 +47,7 @@ a full init system. Typical use cases include:
 
 `nanoinit` is not a general-purpose service manager. It does not implement
 dependency ordering, health checks, privilege switching, environment files, start
-limits, or backoff policies.
+limits, or health-aware backoff policies.
 
 ## Quick start
 
@@ -270,6 +270,10 @@ These commands do not start another supervisor. They connect to the running
 supervisor through the control socket, print the response, and exit. `<app-name>`
 is the JSON object name from the loaded config.
 
+If a supervisor is already active on the configured control socket and `nanoinit`
+is run again without a control command, the second invocation prints the help
+menu and exits instead of starting another supervisor.
+
 Use `list` or `ls` to show all configured applications and their status. Use
 `status` for one application. Use `start` to launch a stopped configured
 application, including one with `"autostart": false`. Use `stop` to send
@@ -434,7 +438,9 @@ Optional boolean. Default: `false`.
 When `true`, `nanoinit` starts the application again after it exits. This applies
 to both clean and failing exits.
 
-There is currently no restart delay, maximum retry count, or backoff policy.
+Restarts are delayed by one second. This keeps a missing executable or instantly
+exiting process from creating a tight restart loop. There is currently no maximum
+retry count or health-aware backoff policy.
 
 `autostart`
 

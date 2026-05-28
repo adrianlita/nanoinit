@@ -25,6 +25,7 @@ The suite covers:
 - no-config zero-config behavior
 - default `/etc/nanoinit/config.json` lookup behavior
 - control commands: `list`, `ls`, `status`, `start`, `stop`
+- second supervisor invocation prints help when the control socket is active
 - invalid config fallback behavior
 - root config parsing
 - nested config parsing with `--config-json-object`
@@ -39,6 +40,8 @@ The suite covers:
 - application `stdout` / `stderr` passthrough
 - empty `stdout` / `stderr` redirection to `/dev/null`
 - `autorestart`
+- autorestart restart delay
+- spawn failure logging
 - `SIGUSR1` config reload
 - nanoinit `--log-path`
 - application `stdout` / `stderr` log rotation

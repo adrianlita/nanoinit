@@ -53,7 +53,9 @@ typedef struct supervisor_control_block_s {
     pid_t pid;
     int running;
     int desired_running;
+    int restart_pending;
     time_t started_at;
+    time_t restart_at;
 
     supervisor_output_stream_t stdout_stream;
     supervisor_output_stream_t stderr_stream;
@@ -62,6 +64,7 @@ typedef struct supervisor_control_block_s {
 typedef enum supervisor_spawn_result_e {
     SUPERVISOR_SPAWN_ERROR = -1,
     SUPERVISOR_SPAWN_STARTED = 0,
+    SUPERVISOR_SPAWN_CHILD_ERROR = 1,
 } supervisor_spawn_result_t;
 
 extern volatile sig_atomic_t supervisor_got_signal_stop;
@@ -76,6 +79,8 @@ void supervisor_free_scb(void);
 supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb);
 int supervisor_any_running(void);
 void supervisor_reap_children(void);
+void supervisor_schedule_restart(supervisor_control_block_t *scb);
+void supervisor_start_pending_restarts(void);
 
 int supervisor_start_control_socket(const char *path);
 void supervisor_close_control_socket(void);

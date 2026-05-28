@@ -132,3 +132,25 @@ class ControlCommandsTest(NanoInitTestCase):
         status_result = self.run_control("status", "missing")
         self.assertNotEqual(0, status_result.returncode)
         self.assertIn("app not found: missing", status_result.stderr)
+
+    def test_second_supervisor_invocation_prints_help(self):
+        config = self.write_config("config.json", {})
+        self.start_with_control_socket(config)
+
+        env = os.environ.copy()
+        env["NANOINIT_CONTROL_SOCKET"] = str(self.control_socket)
+        result = subprocess.run(
+            [str(BIN)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            env=env,
+            timeout=3,
+            check=False,
+        )
+
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertIn("Usage:", result.stdout)
+        self.assertIn("nanoinit list", result.stdout)
+        self.assertIn("nanoinit status APP", result.stdout)
+        self.assertNotIn("could not bind control socket", result.stderr)

@@ -38,6 +38,31 @@
 static const char *control_command_name(nanoinit_special_mode_t special_mode);
 static int control_write_all(int fd, const char *buffer, size_t size);
 
+int control_socket_is_active(const char *path) {
+    if(path == 0) {
+        return 0;
+    }
+
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+
+    size_t path_size = strlen(path);
+    if(path_size >= sizeof(addr.sun_path)) {
+        return 0;
+    }
+    memcpy(addr.sun_path, path, path_size + 1);
+
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if(fd < 0) {
+        return 0;
+    }
+
+    int is_active = connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
+    close(fd);
+    return is_active;
+}
+
 int control_send_command(const nanoinit_arguments_t *arguments) {
     signal(SIGPIPE, SIG_IGN);
 

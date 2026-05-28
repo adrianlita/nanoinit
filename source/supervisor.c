@@ -62,7 +62,9 @@ supervisor_start_begin:
         scb[i].pid = 0;
         scb[i].running = 0;
         scb[i].desired_running = config->applications[i].autostart;
+        scb[i].restart_pending = 0;
         scb[i].started_at = 0;
+        scb[i].restart_at = 0;
         supervisor_init_output_stream(&scb[i].stdout_stream);
         supervisor_init_output_stream(&scb[i].stderr_stream);
     }
@@ -74,7 +76,10 @@ supervisor_start_begin:
     signal(SIGUSR1, supervisor_sigusr1_cb);
     signal(SIGPIPE, SIG_IGN);
 
-    supervisor_start_control_socket(arguments->control_socket_path);
+    if(supervisor_start_control_socket(arguments->control_socket_path) != 0) {
+        supervisor_free_scb();
+        return -1;
+    }
 
     //spawn processes
     for(int i = 0; i < scb_count; i++) {
@@ -85,6 +90,9 @@ supervisor_start_begin:
             }
             else if(spawn_result == SUPERVISOR_SPAWN_ERROR) {
                 log_app_error("supervisor_start() failed to spawn '%s'", scb[i].application->name);
+                if(scb[i].application->autorestart && scb[i].desired_running) {
+                    supervisor_schedule_restart(&scb[i]);
+                }
             }
         }
         else {
@@ -95,6 +103,7 @@ supervisor_start_begin:
     //supervise processes and received signals; this loop is finished when supervisor_got_signal_stop will get set by signal
     int running = 1;
     while(running) {
+        supervisor_start_pending_restarts();
         supervisor_reap_children();
 
         if(supervisor_got_signal_stop) {    //if got the terminate

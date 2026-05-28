@@ -24,6 +24,7 @@
 
 #include "arguments.h"
 #include <argp.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -38,10 +39,19 @@
 
 static nanoinit_arguments_t arguments = {0};
 
-const char *argp_program_version = "nanoinit v0.0.1 build 123451234";
+const char *argp_program_version = "nanoinit v1.2.1";
 const char *argp_program_bug_address = "<adrian@axiplus.com>";
-static char doc[] = "nanoinit - for documentation and usage check https://github.com/adrianlita/nanoinit";
+static char doc[] =
+    "nanoinit - tiny container process supervisor.\v"
+    "Runtime control commands when a nanoinit supervisor is already running:\n"
+    "  nanoinit list\n"
+    "  nanoinit ls\n"
+    "  nanoinit status APP\n"
+    "  nanoinit start APP\n"
+    "  nanoinit stop APP\n\n"
+    "A second supervisor-mode invocation for an active control socket prints this help and exits.";
 static char args_doc[] = "[status APP | start APP | stop APP | list | ls]";
+static error_t argp_parse_cb(int key, char *arg, struct argp_state *state);
 
 static struct argp_option options[] = {
     { "config-file", 'c', "/path/to/config.json", 0, "Specifies the configuration JSON file. If omitted, nanoinit uses /etc/nanoinit/config.json when it exists; otherwise no apps will be run, but nanoinit will sleep for infinity and wait for a kill signal.", 0 },
@@ -52,12 +62,11 @@ static struct argp_option options[] = {
     { 0 } 
 };
 
-static error_t argp_parse_cb(int key, char *arg, struct argp_state *state);
+static struct argp arguments_argp = { options, argp_parse_cb, args_doc, doc, 0, 0, 0 };
 
 const nanoinit_arguments_t *arguments_init(int argc, char **argv) {
     //parse provided command line arguments
-    struct argp argp = { options, argp_parse_cb, args_doc, doc, 0, 0, 0 };
-    argp_parse(&argp, argc, argv, 0, 0, &arguments);
+    argp_parse(&arguments_argp, argc, argv, 0, 0, &arguments);
 
     //check config file and config json object in environment vars
     char *config_file_env = getenv("NANOINIT_CONFIG_FILE");
@@ -89,6 +98,10 @@ const nanoinit_arguments_t *arguments_init(int argc, char **argv) {
     }
 
     return &arguments;
+}
+
+void arguments_print_help(void) {
+    argp_help(&arguments_argp, stdout, ARGP_HELP_STD_HELP, "nanoinit");
 }
 
 static error_t argp_parse_cb(int key, char *arg, struct argp_state *state) {

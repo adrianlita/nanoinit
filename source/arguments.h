@@ -44,4 +44,5 @@ typedef struct nanoinit_arguments_s {
 } nanoinit_arguments_t;
 
 const nanoinit_arguments_t *arguments_init(int argc, char **argv);
+void arguments_print_help(void);
 void arguments_free();

@@ -23,6 +23,7 @@
  * */
 
 #include "internal.h"
+#include "control.h"
 #include "log.h"
 
 #include <errno.h>
@@ -39,7 +40,6 @@
 int supervisor_control_fd = -1;
 const char *supervisor_control_socket_path = 0;
 
-static int supervisor_control_socket_is_active(const char *path);
 static void supervisor_handle_control_request(int client_fd, char *request);
 static void supervisor_handle_control_status(int client_fd, const char *name);
 static void supervisor_handle_control_start(int client_fd, const char *name);
@@ -81,7 +81,7 @@ int supervisor_start_control_socket(const char *path) {
     }
 
     if(bind(fd, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
-        if((errno == EADDRINUSE) && !supervisor_control_socket_is_active(path)) {
+        if((errno == EADDRINUSE) && !control_socket_is_active(path)) {
             unlink(path);
             if(bind(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
                 goto control_socket_bound;
@@ -116,27 +116,6 @@ void supervisor_close_control_socket(void) {
         unlink(supervisor_control_socket_path);
         supervisor_control_socket_path = 0;
     }
-}
-
-static int supervisor_control_socket_is_active(const char *path) {
-    struct sockaddr_un addr;
-    memset(&addr, 0, sizeof(addr));
-    addr.sun_family = AF_UNIX;
-
-    size_t path_size = strlen(path);
-    if(path_size >= sizeof(addr.sun_path)) {
-        return 0;
-    }
-    memcpy(addr.sun_path, path, path_size + 1);
-
-    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
-    if(fd < 0) {
-        return 0;
-    }
-
-    int is_active = connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0;
-    close(fd);
-    return is_active;
 }
 
 void supervisor_accept_control_connection(void) {
@@ -292,6 +271,8 @@ static void supervisor_handle_control_start(int client_fd, const char *name) {
     }
 
     target->desired_running = 1;
+    target->restart_pending = 0;
+    target->restart_at = 0;
     if(target->running) {
         supervisor_write_control_response(client_fd, "OK\napp '%s' is already running\n", target->application->name);
         return;
@@ -320,6 +301,8 @@ static void supervisor_handle_control_stop(int client_fd, const char *name) {
     }
 
     target->desired_running = 0;
+    target->restart_pending = 0;
+    target->restart_at = 0;
     if(!target->running) {
         supervisor_write_control_response(client_fd, "OK\napp '%s' is already stopped\n", target->application->name);
         return;
