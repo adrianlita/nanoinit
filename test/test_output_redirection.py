@@ -35,6 +35,62 @@ class OutputRedirectionTest(NanoInitTestCase):
         self.assertFileNotContains(self.tmp / "nanoinit.stdout", "app stdout")
         self.assertFileNotContains(self.tmp / "nanoinit.stderr", "app stderr")
 
+    def test_output_parent_directories_are_created_for_direct_redirection(self):
+        marker = self.tmp / "mkdir-direct.marker"
+        stdout_log = self.tmp / "missing" / "direct" / "app.stdout"
+        stderr_log = self.tmp / "missing" / "direct" / "app.stderr"
+        app = self.write_file(
+            self.tmp / "mkdir-direct-app.sh",
+            "#!/bin/sh\n"
+            f"printf 'done\\n' > '{marker}'\n"
+            "printf 'created stdout\\n'\n"
+            "printf 'created stderr\\n' >&2\n",
+            executable=True,
+        )
+        config = self.write_config(
+            "config.json",
+            {
+                "mkdir-direct": {
+                    "path": str(app),
+                    "stdout": str(stdout_log),
+                    "stderr": str(stderr_log),
+                }
+            },
+        )
+
+        self.start_nanoinit("-c", config, "-v0")
+        self.wait_for_contains(marker, "done")
+        self.wait_for_contains(stdout_log, "created stdout")
+        self.wait_for_contains(stderr_log, "created stderr")
+        self.assertTrue(stdout_log.parent.is_dir())
+
+    def test_output_parent_directory_creation_can_be_disabled(self):
+        marker = self.tmp / "mkdir-disabled.marker"
+        stdout_log = self.tmp / "missing-disabled" / "direct" / "app.stdout"
+        app = self.write_file(
+            self.tmp / "mkdir-disabled-app.sh",
+            "#!/bin/sh\n"
+            f"printf 'done\\n' > '{marker}'\n"
+            "printf 'should not be written\\n'\n",
+            executable=True,
+        )
+        config = self.write_config(
+            "config.json",
+            {
+                "ni_create_log_dirs": False,
+                "mkdir-disabled": {
+                    "path": str(app),
+                    "stdout": str(stdout_log),
+                },
+            },
+        )
+
+        self.start_nanoinit("-c", config, "-v0")
+        self.wait_for_contains(self.tmp / "nanoinit.stderr", "failed to redirect stdout for app mkdir-disabled")
+        self.assertFalse(marker.exists())
+        self.assertFalse(stdout_log.exists())
+        self.assertFalse(stdout_log.parent.exists())
+
     def test_output_path_placeholders_are_rendered_for_direct_redirection(self):
         marker = self.tmp / "placeholder-direct.marker"
         app = self.write_file(

@@ -56,10 +56,12 @@ typedef struct config_message_s {
 
 static int edJSON_callback(const edJSON_path_t *path, size_t path_size, edJSON_value_t value, void *private);
 static bool config_path_is_inside_json_object(const config_message_t *config_message, const char *path);
+static void config_set_defaults(void);
 static int config_set_non_negative_integer(config_message_t *config_message, edJSON_value_t value, int *destination, const char *field_name, const char *app_name);
 
 const nanoinit_config_t *config_init(const char *filename, const char *json_object) {
     config_free();
+    config_set_defaults();
 
     if(filename == 0) {
         return &config;
@@ -185,6 +187,7 @@ const nanoinit_config_t *config_init(const char *filename, const char *json_obje
         if(!has_config) {
             config_free();
             memset(&config, 0, sizeof(nanoinit_config_t));
+            config_set_defaults();
         }
     }
 
@@ -289,6 +292,23 @@ switch_config_message_state:
                 }
                 free(config.ni_log_format);
                 config.ni_log_format = ni_log_format;
+                return 0;
+            }
+
+            if(strcmp(current_value, "ni_create_log_dirs") == 0) {
+                if(path_size != (component + 1)) {
+                    log_ni_error("edJSON_callback() ni_create_log_dirs should not have child objects");
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                if(value.value_type != EDJSON_VT_BOOL) {
+                    log_ni_error("edJSON_callback() ni_create_log_dirs value type should be boolean");
+                    config_message->return_code = 2;
+                    return 1;
+                }
+
+                config.ni_create_log_dirs = value.value.boolean;
                 return 0;
             }
 
@@ -663,6 +683,10 @@ static bool config_path_is_inside_json_object(const config_message_t *config_mes
     return (strlen(path) > config_message->json_object_length)
         && (strncmp(config_message->json_object, path, config_message->json_object_length) == 0)
         && (path[config_message->json_object_length] == '/');
+}
+
+static void config_set_defaults(void) {
+    config.ni_create_log_dirs = true;
 }
 
 static int config_set_non_negative_integer(config_message_t *config_message, edJSON_value_t value, int *destination, const char *field_name, const char *app_name) {

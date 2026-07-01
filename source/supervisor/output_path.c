@@ -26,7 +26,10 @@
 #include "log.h"
 #include "log_formatter.h"
 
+#include <errno.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 
 typedef struct supervisor_output_path_format_s {
     char *timestamp;
@@ -37,6 +40,7 @@ typedef struct supervisor_output_path_format_s {
 static void output_path_format_init(supervisor_output_path_format_t *format);
 static void output_path_format_free(supervisor_output_path_format_t *format);
 static char *output_path_render(const char *path, const char *application_name, const supervisor_output_path_format_t *format);
+static int output_path_ensure_directory(const char *path);
 
 int supervisor_output_paths_render(const nanoinit_application_config_t *application, supervisor_output_paths_t *paths) {
     if((application == 0) || (paths == 0)) {
@@ -93,6 +97,60 @@ const char *supervisor_output_path_redirect_target(const char *path, const char 
     return path;
 }
 
+int supervisor_output_path_create_parent_dirs(const char *path) {
+    if((path == 0) || (path[0] == 0)) {
+        return 0;
+    }
+
+    char *parent_path = strdup(path);
+    if(parent_path == 0) {
+        errno = ENOMEM;
+        return -1;
+    }
+
+    char *last_slash = strrchr(parent_path, '/');
+    if(last_slash == 0) {
+        free(parent_path);
+        return 0;
+    }
+
+    while((last_slash > parent_path) && (last_slash[-1] == '/')) {
+        last_slash--;
+    }
+
+    if(last_slash == parent_path) {
+        free(parent_path);
+        return 0;
+    }
+    *last_slash = 0;
+
+    char *cursor = parent_path;
+    if(cursor[0] == '/') {
+        cursor++;
+    }
+
+    for(; *cursor != 0; cursor++) {
+        if(*cursor != '/') {
+            continue;
+        }
+
+        *cursor = 0;
+        if((parent_path[0] != 0) && (output_path_ensure_directory(parent_path) != 0)) {
+            int saved_errno = errno;
+            free(parent_path);
+            errno = saved_errno;
+            return -1;
+        }
+        *cursor = '/';
+    }
+
+    int result = output_path_ensure_directory(parent_path);
+    int saved_errno = errno;
+    free(parent_path);
+    errno = saved_errno;
+    return result;
+}
+
 static void output_path_format_init(supervisor_output_path_format_t *format) {
     format->timestamp = log_format_current_timestamp();
     format->timestamp_iso = log_format_current_timestamp_iso();
@@ -123,4 +181,20 @@ static char *output_path_render(const char *path, const char *application_name, 
     };
 
     return log_format_render(path, &values);
+}
+
+static int output_path_ensure_directory(const char *path) {
+    if(mkdir(path, 0777) == 0) {
+        return 0;
+    }
+
+    if(errno == EEXIST) {
+        struct stat st;
+        if((stat(path, &st) == 0) && S_ISDIR(st.st_mode)) {
+            return 0;
+        }
+        errno = ENOTDIR;
+    }
+
+    return -1;
 }

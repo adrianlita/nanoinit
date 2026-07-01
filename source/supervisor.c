@@ -63,6 +63,7 @@ supervisor_start_begin:
         scb[i].running = 0;
         scb[i].desired_running = config->applications[i].autostart;
         scb[i].restart_pending = 0;
+        scb[i].create_log_dirs = config->ni_create_log_dirs;
         scb[i].started_at = 0;
         scb[i].restart_at = 0;
         supervisor_init_output_stream(&scb[i].stdout_stream);

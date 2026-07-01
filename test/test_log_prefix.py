@@ -44,6 +44,33 @@ class LogPrefixTest(NanoInitTestCase):
         self.wait_for_contains(self.tmp / "nanoinit.stdout", "] out-two")
         self.wait_for_contains(self.tmp / "nanoinit.stderr", "] err-two")
 
+    def test_parent_directories_are_created_for_prefixed_files(self):
+        stdout_log = self.tmp / "missing" / "prefixed" / "prefix.stdout.log"
+        stderr_log = self.tmp / "missing" / "prefixed" / "prefix.stderr.log"
+        app = self.write_file(
+            self.tmp / "prefix-mkdir-app.sh",
+            "#!/bin/sh\n"
+            "printf 'mkdir stdout\\n'\n"
+            "printf 'mkdir stderr\\n' >&2\n",
+            executable=True,
+        )
+        config = self.write_config(
+            "config.json",
+            {
+                "prefix-mkdir": {
+                    "path": str(app),
+                    "stdout": str(stdout_log),
+                    "stderr": str(stderr_log),
+                    "prefix_logs": "[{app-name}] ",
+                }
+            },
+        )
+
+        self.start_nanoinit("-c", config, "-v0")
+        self.wait_for_contains(stdout_log, "[prefix-mkdir] mkdir stdout")
+        self.wait_for_contains(stderr_log, "[prefix-mkdir] mkdir stderr")
+        self.assertTrue(stdout_log.parent.is_dir())
+
     def test_output_path_placeholders_are_rendered_for_prefixed_files(self):
         app = self.write_file(
             self.tmp / "prefix-placeholder-app.sh",

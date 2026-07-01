@@ -54,7 +54,7 @@ static void supervisor_log_process_status(const char *name, pid_t pid, int statu
 static int supervisor_create_child_error_pipe(int error_pipe[2]);
 static void supervisor_close_pipe(int pipe_fds[2]);
 static void supervisor_child_redirect_pipe(int error_pipe_fd, supervisor_child_error_stage_t stage, int pipe_fds[2], int output_fd);
-static void supervisor_child_redirect_path(int error_pipe_fd, supervisor_child_error_stage_t stage, const char *path, int output_fd);
+static void supervisor_child_redirect_path(int error_pipe_fd, supervisor_child_error_stage_t stage, const char *path, bool create_log_dirs, int output_fd);
 static void supervisor_child_report_error(int error_pipe_fd, supervisor_child_error_stage_t stage, int error_code);
 static int supervisor_read_child_error(int error_pipe_fd, supervisor_child_error_t *child_error);
 static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error, const char *stdout_target, const char *stderr_target);
@@ -154,14 +154,14 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
             supervisor_child_redirect_pipe(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, stdout_pipe, STDOUT_FILENO);
         }
         else {
-            supervisor_child_redirect_path(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, output_paths.stdout_path, STDOUT_FILENO);
+            supervisor_child_redirect_path(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, output_paths.stdout_path, scb->create_log_dirs, STDOUT_FILENO);
         }
 
         if(pipe_stderr) {
             supervisor_child_redirect_pipe(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, stderr_pipe, STDERR_FILENO);
         }
         else {
-            supervisor_child_redirect_path(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, output_paths.stderr_path, STDERR_FILENO);
+            supervisor_child_redirect_path(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, output_paths.stderr_path, scb->create_log_dirs, STDERR_FILENO);
         }
 
         //copy path and arguments as they will be freed
@@ -235,6 +235,7 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
             &scb->stdout_stream,
             stdout_pipe[0],
             output_paths.stdout_path,
+            scb->create_log_dirs,
             scb->application->stdout_rotate_size,
             scb->application->stdout_rotate_count,
             passthrough_fd,
@@ -259,6 +260,7 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
             &scb->stderr_stream,
             stderr_pipe[0],
             output_paths.stderr_path,
+            scb->create_log_dirs,
             scb->application->stderr_rotate_size,
             scb->application->stderr_rotate_count,
             passthrough_fd,
@@ -432,10 +434,15 @@ static void supervisor_child_redirect_pipe(int error_pipe_fd, supervisor_child_e
     close(pipe_fds[1]);
 }
 
-static void supervisor_child_redirect_path(int error_pipe_fd, supervisor_child_error_stage_t stage, const char *path, int output_fd) {
+static void supervisor_child_redirect_path(int error_pipe_fd, supervisor_child_error_stage_t stage, const char *path, bool create_log_dirs, int output_fd) {
     const char *redirect_path = supervisor_output_path_redirect_target(path, 0);
     if(redirect_path == 0) {
         return;
+    }
+
+    if(create_log_dirs && (supervisor_output_path_create_parent_dirs(redirect_path) != 0)) {
+        supervisor_child_report_error(error_pipe_fd, stage, errno);
+        _exit(255);
     }
 
     int fd = open(redirect_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);

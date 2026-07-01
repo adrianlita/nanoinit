@@ -51,6 +51,7 @@ void supervisor_init_output_stream(supervisor_output_stream_t *stream) {
     stream->pipe_fd = -1;
     stream->file_fd = -1;
     stream->path = 0;
+    stream->create_log_dirs = true;
     stream->rotate_size = 0;
     stream->rotate_count = 0;
     stream->passthrough_fd = -1;
@@ -104,7 +105,7 @@ int supervisor_output_stream_configured(const char *path, int rotate_size, int p
     return (path == 0) && supervisor_prefix_configured(prefix_logs);
 }
 
-int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_fd, const char *path, int rotate_size, int rotate_count, int passthrough_fd, const char *application_name, const char *stream_name, const char *prefix_logs) {
+int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_fd, const char *path, bool create_log_dirs, int rotate_size, int rotate_count, int passthrough_fd, const char *application_name, const char *stream_name, const char *prefix_logs) {
     int flags = fcntl(pipe_fd, F_GETFL, 0);
     if(flags < 0) {
         log_ni_error("supervisor_start_output_stream() could not read pipe flags for %s %s", application_name, stream_name);
@@ -128,6 +129,7 @@ int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_
     stream->pipe_fd = pipe_fd;
     stream->file_fd = -1;
     stream->path = stream_path;
+    stream->create_log_dirs = create_log_dirs;
     stream->rotate_size = rotate_size;
     stream->rotate_count = rotate_count;
     stream->passthrough_fd = passthrough_fd;
@@ -154,6 +156,11 @@ int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_
 }
 
 static int supervisor_open_output_stream_file(supervisor_output_stream_t *stream) {
+    if(stream->create_log_dirs && (supervisor_output_path_create_parent_dirs(stream->path) != 0)) {
+        log_ni_error("supervisor_open_output_stream_file() could not create parent directories for %s for app %s %s output: %s", stream->path, stream->application_name, stream->stream_name, strerror(errno));
+        return -1;
+    }
+
     stream->file_fd = open(stream->path, O_WRONLY | O_CREAT | O_APPEND, 0666);
     if(stream->file_fd < 0) {
         log_ni_error("supervisor_open_output_stream_file() could not open %s for app %s %s output", stream->path, stream->application_name, stream->stream_name);

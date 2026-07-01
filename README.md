@@ -364,8 +364,8 @@ The configuration file is JSON parsed by the bundled `edJSON` parser. JSON
 comments are supported.
 
 At the selected configuration object, every property name is treated as an
-application name, except for the reserved global option `ni_log_format`. Each
-application value must be an object.
+application name, except for reserved global options such as `ni_log_format` and
+`ni_create_log_dirs`. Each application value must be an object.
 
 Minimal config:
 
@@ -382,6 +382,7 @@ Full application entry:
 ```json
 {
     "ni_log_format": "[{timestamp}] [{device-name}] [{app-name}] {message}",
+    "ni_create_log_dirs": true,
     "app": {
         "path": "/usr/local/bin/app",
         "args": ["--listen", "0.0.0.0:8080"],
@@ -420,6 +421,16 @@ It supports the same placeholders as `NI_LOG_FORMAT`:
 `NI_LOG_FORMAT` takes precedence when both are configured. The config value is
 applied after the config file is parsed, so parse errors emitted while loading
 the file still use the default or environment-provided format.
+
+`ni_create_log_dirs`
+
+Optional boolean. Default: `true`.
+
+When `true`, nanoinit creates missing parent directories for application
+`stdout` and `stderr` file paths before opening the log file. Directories are
+created after placeholders in the path are rendered. Set this to `false` to keep
+the previous behavior where missing parent directories make the output file open
+fail.
 
 ### Application fields
 
@@ -522,7 +533,8 @@ Optional string. Redirects the application's standard output.
 
 The path supports the same placeholders as `prefix_logs`. The path is rendered
 once when the application is spawned; `{message}` is empty for file paths and
-unknown placeholders are left unchanged.
+unknown placeholders are left unchanged. Missing parent directories are created
+by default unless `ni_create_log_dirs` is `false`.
 
 `stdout_passthrough`
 
@@ -583,7 +595,8 @@ Optional string. Redirects the application's standard error.
 - non-empty string: write `stderr` to that path
 - empty string `""`: redirect `stderr` to `/dev/null`
 
-The path supports the same placeholders as `stdout`.
+The path supports the same placeholders and parent-directory creation behavior
+as `stdout`.
 
 `stderr_passthrough`
 
