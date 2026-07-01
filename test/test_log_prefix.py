@@ -44,6 +44,39 @@ class LogPrefixTest(NanoInitTestCase):
         self.wait_for_contains(self.tmp / "nanoinit.stdout", "] out-two")
         self.wait_for_contains(self.tmp / "nanoinit.stderr", "] err-two")
 
+    def test_output_path_placeholders_are_rendered_for_prefixed_files(self):
+        app = self.write_file(
+            self.tmp / "prefix-placeholder-app.sh",
+            "#!/bin/sh\n"
+            "printf 'prefixed stdout\\n'\n"
+            "printf 'prefixed stderr\\n' >&2\n",
+            executable=True,
+        )
+        config = self.write_config(
+            "config.json",
+            {
+                "prefix-placeholder": {
+                    "path": str(app),
+                    "stdout": str(self.tmp / "prefixed-{device-name}-{app-name}-{timestamp}.out"),
+                    "stderr": str(self.tmp / "prefixed-{device-name}-{app-name}-{timestamp}.err"),
+                    "stdout_passthrough": True,
+                    "stderr_passthrough": True,
+                    "prefix_logs": "[{device-name}:{app-name}] ",
+                }
+            },
+        )
+
+        self.start_nanoinit("-c", config, "-v0", env={"DEVICE_NAME": "path-device"})
+        self.wait_for(lambda: len(list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.out"))) == 1, "rendered prefixed stdout log")
+        self.wait_for(lambda: len(list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.err"))) == 1, "rendered prefixed stderr log")
+
+        stdout_logs = list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.out"))
+        stderr_logs = list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.err"))
+        self.assertFileContains(stdout_logs[0], "[path-device:prefix-placeholder] prefixed stdout")
+        self.assertFileContains(stderr_logs[0], "[path-device:prefix-placeholder] prefixed stderr")
+        self.wait_for_contains(self.tmp / "nanoinit.stdout", "[path-device:prefix-placeholder] prefixed stdout")
+        self.wait_for_contains(self.tmp / "nanoinit.stderr", "[path-device:prefix-placeholder] prefixed stderr")
+
     def test_prefix_logs_applies_to_default_stdout_across_split_lines(self):
         app = self.write_file(
             self.tmp / "prefix-split-app.sh",

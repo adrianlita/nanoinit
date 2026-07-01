@@ -38,14 +38,7 @@
 static int supervisor_open_output_stream_file(supervisor_output_stream_t *stream);
 static int supervisor_rotate_output_stream(supervisor_output_stream_t *stream);
 static char *supervisor_rotated_path(const char *path, int index);
-static int supervisor_write_fd(
-    supervisor_output_stream_t *stream,
-    int fd,
-    const char *buffer,
-    size_t size,
-    long long *bytes_written,
-    const char *destination
-);
+static int supervisor_write_fd(supervisor_output_stream_t *stream, int fd, const char *buffer, size_t size, long long *bytes_written, const char *destination);
 static int supervisor_write_output_stream_chunk(supervisor_output_stream_t *stream, const char *buffer, size_t size);
 static int supervisor_write_output_stream_raw(supervisor_output_stream_t *stream, const char *buffer, size_t size);
 static int supervisor_write_output_stream(supervisor_output_stream_t *stream, const char *buffer, size_t size);
@@ -76,6 +69,7 @@ void supervisor_close_output_stream(supervisor_output_stream_t *stream) {
     if(stream->file_fd >= 0) {
         close(stream->file_fd);
     }
+    free(stream->path);
     free(stream->prefix_device_name);
 
     supervisor_init_output_stream(stream);
@@ -110,17 +104,7 @@ int supervisor_output_stream_configured(const char *path, int rotate_size, int p
     return (path == 0) && supervisor_prefix_configured(prefix_logs);
 }
 
-int supervisor_start_output_stream(
-    supervisor_output_stream_t *stream,
-    int pipe_fd,
-    const char *path,
-    int rotate_size,
-    int rotate_count,
-    int passthrough_fd,
-    const char *application_name,
-    const char *stream_name,
-    const char *prefix_logs
-) {
+int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_fd, const char *path, int rotate_size, int rotate_count, int passthrough_fd, const char *application_name, const char *stream_name, const char *prefix_logs) {
     int flags = fcntl(pipe_fd, F_GETFL, 0);
     if(flags < 0) {
         log_ni_error("supervisor_start_output_stream() could not read pipe flags for %s %s", application_name, stream_name);
@@ -132,9 +116,18 @@ int supervisor_start_output_stream(
         return -1;
     }
 
+    char *stream_path = 0;
+    if(path != 0) {
+        stream_path = strdup(path);
+        if(stream_path == 0) {
+            log_ni_error("supervisor_start_output_stream() could not allocate output path for %s %s", application_name, stream_name);
+            return -1;
+        }
+    }
+
     stream->pipe_fd = pipe_fd;
     stream->file_fd = -1;
-    stream->path = path;
+    stream->path = stream_path;
     stream->rotate_size = rotate_size;
     stream->rotate_count = rotate_count;
     stream->passthrough_fd = passthrough_fd;
@@ -393,14 +386,7 @@ static int supervisor_prefix_configured(const char *prefix_logs) {
     return (prefix_logs != 0) && (prefix_logs[0] != 0);
 }
 
-static int supervisor_write_fd(
-    supervisor_output_stream_t *stream,
-    int fd,
-    const char *buffer,
-    size_t size,
-    long long *bytes_written,
-    const char *destination
-) {
+static int supervisor_write_fd(supervisor_output_stream_t *stream, int fd, const char *buffer, size_t size, long long *bytes_written, const char *destination) {
     size_t written_from_chunk = 0;
 
     while(written_from_chunk < size) {

@@ -35,7 +35,7 @@
 typedef struct supervisor_output_stream_s {
     int pipe_fd;
     int file_fd;
-    const char *path;
+    char *path;
     int rotate_size;
     int rotate_count;
     int passthrough_fd;
@@ -46,6 +46,11 @@ typedef struct supervisor_output_stream_s {
     const char *application_name;
     const char *stream_name;
 } supervisor_output_stream_t;
+
+typedef struct supervisor_output_paths_s {
+    char *stdout_path;
+    char *stderr_path;
+} supervisor_output_paths_t;
 
 typedef struct supervisor_control_block_s {
     const nanoinit_application_config_t *application; //application data from config
@@ -90,19 +95,14 @@ void supervisor_init_output_stream(supervisor_output_stream_t *stream);
 void supervisor_close_output_stream(supervisor_output_stream_t *stream);
 void supervisor_close_all_output_streams(void);
 int supervisor_any_stream_open(void);
+
+int supervisor_output_paths_render(const nanoinit_application_config_t *application, supervisor_output_paths_t *paths);
+void supervisor_output_paths_free(supervisor_output_paths_t *paths);
+const char *supervisor_output_path_redirect_target(const char *path, const char *pipe_target);
+
 int supervisor_file_output_configured(const char *path);
 int supervisor_output_stream_configured(const char *path, int rotate_size, int passthrough, const char *prefix_logs);
-int supervisor_start_output_stream(
-    supervisor_output_stream_t *stream,
-    int pipe_fd,
-    const char *path,
-    int rotate_size,
-    int rotate_count,
-    int passthrough_fd,
-    const char *application_name,
-    const char *stream_name,
-    const char *prefix_logs
-);
+int supervisor_start_output_stream(supervisor_output_stream_t *stream, int pipe_fd, const char *path, int rotate_size, int rotate_count, int passthrough_fd, const char *application_name, const char *stream_name, const char *prefix_logs);
 void supervisor_drain_output_stream(supervisor_output_stream_t *stream);
 void supervisor_drain_output_streams(int timeout_ms);
 void supervisor_drain_scb_output_streams(supervisor_control_block_t *scb);

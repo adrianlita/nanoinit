@@ -53,24 +53,31 @@ typedef struct supervisor_child_error_s {
 static void supervisor_log_process_status(const char *name, pid_t pid, int status, int app_error);
 static int supervisor_create_child_error_pipe(int error_pipe[2]);
 static void supervisor_close_pipe(int pipe_fds[2]);
+static void supervisor_child_redirect_pipe(int error_pipe_fd, supervisor_child_error_stage_t stage, int pipe_fds[2], int output_fd);
+static void supervisor_child_redirect_path(int error_pipe_fd, supervisor_child_error_stage_t stage, const char *path, int output_fd);
 static void supervisor_child_report_error(int error_pipe_fd, supervisor_child_error_stage_t stage, int error_code);
 static int supervisor_read_child_error(int error_pipe_fd, supervisor_child_error_t *child_error);
-static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error);
+static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error, const char *stdout_target, const char *stderr_target);
 
 supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
     int stdout_pipe[2] = { -1, -1 };
     int stderr_pipe[2] = { -1, -1 };
     int child_error_pipe[2] = { -1, -1 };
-    int stdout_is_file = supervisor_file_output_configured(scb->application->stdout_path);
-    int stderr_is_file = supervisor_file_output_configured(scb->application->stderr_path);
+    supervisor_output_paths_t output_paths = { 0 };
+    if(supervisor_output_paths_render(scb->application, &output_paths) != 0) {
+        return SUPERVISOR_SPAWN_ERROR;
+    }
+
+    int stdout_is_file = supervisor_file_output_configured(output_paths.stdout_path);
+    int stderr_is_file = supervisor_file_output_configured(output_paths.stderr_path);
     int pipe_stdout = supervisor_output_stream_configured(
-        scb->application->stdout_path,
+        output_paths.stdout_path,
         scb->application->stdout_rotate_size,
         scb->application->stdout_passthrough,
         scb->application->prefix_logs
     );
     int pipe_stderr = supervisor_output_stream_configured(
-        scb->application->stderr_path,
+        output_paths.stderr_path,
         scb->application->stderr_rotate_size,
         scb->application->stderr_passthrough,
         scb->application->prefix_logs
@@ -87,16 +94,17 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         log_ni_error("supervisor_spawn() stderr rotation ignored for app %s because stderr is not a file path", scb->application->name);
     }
 
-    if(scb->application->stdout_passthrough && (scb->application->stdout_path != 0) && !stdout_is_file) {
+    if(scb->application->stdout_passthrough && (output_paths.stdout_path != 0) && !stdout_is_file) {
         log_ni_error("supervisor_spawn() stdout passthrough ignored for app %s because stdout is not a file path", scb->application->name);
     }
 
-    if(scb->application->stderr_passthrough && (scb->application->stderr_path != 0) && !stderr_is_file) {
+    if(scb->application->stderr_passthrough && (output_paths.stderr_path != 0) && !stderr_is_file) {
         log_ni_error("supervisor_spawn() stderr passthrough ignored for app %s because stderr is not a file path", scb->application->name);
     }
 
     if(pipe_stdout && (pipe(stdout_pipe) != 0)) {
         log_ni_error("supervisor_spawn() could not create stdout pipe for app %s", scb->application->name);
+        supervisor_output_paths_free(&output_paths);
         return SUPERVISOR_SPAWN_ERROR;
     }
 
@@ -106,6 +114,7 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
             close(stdout_pipe[0]);
             close(stdout_pipe[1]);
         }
+        supervisor_output_paths_free(&output_paths);
         return SUPERVISOR_SPAWN_ERROR;
     }
 
@@ -113,6 +122,7 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         log_ni_error("supervisor_spawn() could not create child error pipe for app %s", scb->application->name);
         supervisor_close_pipe(stdout_pipe);
         supervisor_close_pipe(stderr_pipe);
+        supervisor_output_paths_free(&output_paths);
         return SUPERVISOR_SPAWN_ERROR;
     }
 
@@ -125,13 +135,14 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         supervisor_close_pipe(stdout_pipe);
         supervisor_close_pipe(stderr_pipe);
         supervisor_close_pipe(child_error_pipe);
+        supervisor_output_paths_free(&output_paths);
         return SUPERVISOR_SPAWN_ERROR;
     }
 
     if(scb->pid == 0) {
         //child process
         close(child_error_pipe[0]);
-        
+
         //unregister signals from parent
         signal(SIGINT, SIG_DFL);
         signal(SIGTERM, SIG_DFL);
@@ -139,90 +150,18 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         signal(SIGUSR1, SIG_DFL);
         signal(SIGPIPE, SIG_DFL);
 
-        //redirect stdout ?
         if(pipe_stdout) {
-            close(stdout_pipe[0]);
-            if(dup2(stdout_pipe[1], STDOUT_FILENO) < 0) {
-                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, errno);
-                _exit(255);
-            }
-            close(stdout_pipe[1]);
+            supervisor_child_redirect_pipe(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, stdout_pipe, STDOUT_FILENO);
         }
         else {
-            char *stdout_path = scb->application->stdout_path ? strdup(scb->application->stdout_path) : 0;
-            if((scb->application->stdout_path != 0) && (stdout_path == 0)) {
-                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, ENOMEM);
-                _exit(255);
-            }
-
-            if(stdout_path && stdout_path[0] == 0) {
-                free(stdout_path);
-                stdout_path = strdup("/dev/null");
-                if(stdout_path == 0) {
-                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, ENOMEM);
-                    _exit(255);
-                }
-            }
-
-            if(stdout_path) {
-                int stdout_fd = open(stdout_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                if(stdout_fd < 0) {
-                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, errno);
-                    _exit(255);
-                }
-                else {
-                    if(dup2(stdout_fd, STDOUT_FILENO) < 0) {
-                        supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, errno);
-                        close(stdout_fd);
-                        _exit(255);
-                    }
-                    close(stdout_fd);
-                }
-                free(stdout_path);
-            }
+            supervisor_child_redirect_path(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT, output_paths.stdout_path, STDOUT_FILENO);
         }
 
-        //redirect stderr ?
         if(pipe_stderr) {
-            close(stderr_pipe[0]);
-            if(dup2(stderr_pipe[1], STDERR_FILENO) < 0) {
-                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, errno);
-                _exit(255);
-            }
-            close(stderr_pipe[1]);
+            supervisor_child_redirect_pipe(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, stderr_pipe, STDERR_FILENO);
         }
         else {
-            char *stderr_path = scb->application->stderr_path ? strdup(scb->application->stderr_path) : 0;
-            if((scb->application->stderr_path != 0) && (stderr_path == 0)) {
-                supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, ENOMEM);
-                _exit(255);
-            }
-
-            if(stderr_path && stderr_path[0] == 0) {
-                free(stderr_path);
-                stderr_path = strdup("/dev/null");
-                if(stderr_path == 0) {
-                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, ENOMEM);
-                    _exit(255);
-                }
-            }
-
-            if(stderr_path) {
-                int stderr_fd = open(stderr_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-                if(stderr_fd < 0) {
-                    supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, errno);
-                    _exit(255);
-                }
-                else {
-                    if(dup2(stderr_fd, STDERR_FILENO) < 0) {
-                        supervisor_child_report_error(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, errno);
-                        close(stderr_fd);
-                        _exit(255);
-                    }
-                    close(stderr_fd);
-                }
-                free(stderr_path);
-            }
+            supervisor_child_redirect_path(child_error_pipe[1], SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR, output_paths.stderr_path, STDERR_FILENO);
         }
 
         //copy path and arguments as they will be freed
@@ -288,14 +227,14 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         if(stdout_is_file) {
             passthrough_fd = scb->application->stdout_passthrough ? STDOUT_FILENO : -1;
         }
-        else if(scb->application->stdout_path == 0) {
+        else if(output_paths.stdout_path == 0) {
             passthrough_fd = STDOUT_FILENO;
         }
         close(stdout_pipe[1]);
         if(supervisor_start_output_stream(
             &scb->stdout_stream,
             stdout_pipe[0],
-            scb->application->stdout_path,
+            output_paths.stdout_path,
             scb->application->stdout_rotate_size,
             scb->application->stdout_rotate_count,
             passthrough_fd,
@@ -312,14 +251,14 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
         if(stderr_is_file) {
             passthrough_fd = scb->application->stderr_passthrough ? STDERR_FILENO : -1;
         }
-        else if(scb->application->stderr_path == 0) {
+        else if(output_paths.stderr_path == 0) {
             passthrough_fd = STDERR_FILENO;
         }
         close(stderr_pipe[1]);
         if(supervisor_start_output_stream(
             &scb->stderr_stream,
             stderr_pipe[0],
-            scb->application->stderr_path,
+            output_paths.stderr_path,
             scb->application->stderr_rotate_size,
             scb->application->stderr_rotate_count,
             passthrough_fd,
@@ -335,14 +274,18 @@ supervisor_spawn_result_t supervisor_spawn(supervisor_control_block_t *scb) {
 
     supervisor_child_error_t child_error;
     if(supervisor_read_child_error(child_error_pipe[0], &child_error)) {
-        supervisor_log_child_error(scb, &child_error);
+        const char *stdout_target = pipe_stdout ? "stdout pipe" : supervisor_output_path_redirect_target(output_paths.stdout_path, "stdout pipe");
+        const char *stderr_target = pipe_stderr ? "stderr pipe" : supervisor_output_path_redirect_target(output_paths.stderr_path, "stderr pipe");
+        supervisor_log_child_error(scb, &child_error, stdout_target, stderr_target);
         close(child_error_pipe[0]);
         child_error_pipe[0] = -1;
+        supervisor_output_paths_free(&output_paths);
         return SUPERVISOR_SPAWN_CHILD_ERROR;
     }
 
     close(child_error_pipe[0]);
     child_error_pipe[0] = -1;
+    supervisor_output_paths_free(&output_paths);
     return SUPERVISOR_SPAWN_STARTED;
 }
 
@@ -480,6 +423,36 @@ static void supervisor_close_pipe(int pipe_fds[2]) {
     }
 }
 
+static void supervisor_child_redirect_pipe(int error_pipe_fd, supervisor_child_error_stage_t stage, int pipe_fds[2], int output_fd) {
+    close(pipe_fds[0]);
+    if(dup2(pipe_fds[1], output_fd) < 0) {
+        supervisor_child_report_error(error_pipe_fd, stage, errno);
+        _exit(255);
+    }
+    close(pipe_fds[1]);
+}
+
+static void supervisor_child_redirect_path(int error_pipe_fd, supervisor_child_error_stage_t stage, const char *path, int output_fd) {
+    const char *redirect_path = supervisor_output_path_redirect_target(path, 0);
+    if(redirect_path == 0) {
+        return;
+    }
+
+    int fd = open(redirect_path, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if(fd < 0) {
+        supervisor_child_report_error(error_pipe_fd, stage, errno);
+        _exit(255);
+    }
+
+    if(dup2(fd, output_fd) < 0) {
+        supervisor_child_report_error(error_pipe_fd, stage, errno);
+        close(fd);
+        _exit(255);
+    }
+
+    close(fd);
+}
+
 static void supervisor_child_report_error(int error_pipe_fd, supervisor_child_error_stage_t stage, int error_code) {
     supervisor_child_error_t child_error = {
         .stage = stage,
@@ -540,7 +513,7 @@ static int supervisor_read_child_error(int error_pipe_fd, supervisor_child_error
     return read_result == (ssize_t)sizeof(*child_error);
 }
 
-static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error) {
+static void supervisor_log_child_error(const supervisor_control_block_t *scb, const supervisor_child_error_t *child_error, const char *stdout_target, const char *stderr_target) {
     const char *name = scb->application->name ? scb->application->name : "(unknown)";
     const char *path = scb->application->path ? scb->application->path : "(null)";
     const char *error = child_error->error_code > 0 ? strerror(child_error->error_code) : "unknown error";
@@ -551,12 +524,12 @@ static void supervisor_log_child_error(const supervisor_control_block_t *scb, co
             break;
 
         case SUPERVISOR_CHILD_ERROR_REDIRECT_STDOUT: {
-            const char *target = scb->application->stdout_path ? scb->application->stdout_path : "stdout pipe";
+            const char *target = stdout_target ? stdout_target : "stdout pipe";
             log_ni_error("supervisor_spawn() failed to redirect stdout for app %s to %s: %s", name, target, error);
         } break;
 
         case SUPERVISOR_CHILD_ERROR_REDIRECT_STDERR: {
-            const char *target = scb->application->stderr_path ? scb->application->stderr_path : "stderr pipe";
+            const char *target = stderr_target ? stderr_target : "stderr pipe";
             log_ni_error("supervisor_spawn() failed to redirect stderr for app %s to %s: %s", name, target, error);
         } break;
 

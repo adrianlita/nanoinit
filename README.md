@@ -517,6 +517,11 @@ Optional string. Redirects the application's standard output.
 - non-empty string: write `stdout` to that path
 - empty string `""`: redirect `stdout` to `/dev/null`
 
+The path supports the same placeholders as `prefix_logs`: `{timestamp}`,
+`{timestampISO}`, `{app-name}`, `{device-name}`, and `{message}`. The path is
+rendered once when the application is spawned; `{message}` is empty for file
+paths and unknown placeholders are left unchanged.
+
 `stdout_passthrough`
 
 Optional boolean. Default: `false`.
@@ -575,6 +580,8 @@ Optional string. Redirects the application's standard error.
 - omitted: inherit nanoinit's `stderr`
 - non-empty string: write `stderr` to that path
 - empty string `""`: redirect `stderr` to `/dev/null`
+
+The path supports the same placeholders as `stdout`.
 
 `stderr_passthrough`
 
