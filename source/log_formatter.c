@@ -33,6 +33,7 @@
 
 static int log_format_append(char **buffer, size_t *length, size_t *capacity, const char *value, size_t value_size);
 static const char *log_format_placeholder_value(const char *name, size_t name_size, const log_format_values_t *values);
+static const char *log_format_environment_placeholder_value(const char *name, size_t name_size);
 
 char *log_format_render(const char *format, const log_format_values_t *values) {
     if(format == 0) {
@@ -208,6 +209,11 @@ static int log_format_append(char **buffer, size_t *length, size_t *capacity, co
 }
 
 static const char *log_format_placeholder_value(const char *name, size_t name_size, const log_format_values_t *values) {
+    const char *env_value = log_format_environment_placeholder_value(name, name_size);
+    if(env_value != 0) {
+        return env_value;
+    }
+
     if(values == 0) {
         return 0;
     }
@@ -233,4 +239,25 @@ static const char *log_format_placeholder_value(const char *name, size_t name_si
     }
 
     return 0;
+}
+
+static const char *log_format_environment_placeholder_value(const char *name, size_t name_size) {
+    const char env_prefix[] = "env:";
+    size_t env_prefix_size = strlen(env_prefix);
+    if((name_size <= env_prefix_size) || (strncmp(name, env_prefix, env_prefix_size) != 0)) {
+        return 0;
+    }
+
+    size_t env_name_size = name_size - env_prefix_size;
+    char *env_name = (char *)malloc(env_name_size + 1);
+    if(env_name == 0) {
+        return 0;
+    }
+
+    memcpy(env_name, name + env_prefix_size, env_name_size);
+    env_name[env_name_size] = 0;
+
+    const char *value = getenv(env_name);
+    free(env_name);
+    return value ? value : "";
 }

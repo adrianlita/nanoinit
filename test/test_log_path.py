@@ -40,6 +40,25 @@ class LogPathTest(NanoInitTestCase):
         content = log_file.read_text(errors="replace")
         self.assertIn("device=test-device app=nanoinit ts=", content)
 
+    def test_log_format_supports_environment_placeholders(self):
+        marker = self.tmp / "log-format-env.marker"
+        log_file = self.tmp / "nanoinit-format-env.log"
+        app = self.write_marker_script("log-format-env-app.sh", marker, "log-format-env")
+        config = self.write_config("config.json", {"log-format-env": {"path": str(app)}})
+
+        self.start_nanoinit(
+            "-c",
+            config,
+            f"--log-path={log_file}",
+            "-v0",
+            env={
+                "NI_LOG_FORMAT": "field={env:NANOINIT_TEST_LOG_FIELD} missing={env:NANOINIT_TEST_LOG_MISSING_FIELD_DO_NOT_SET_7D4F31} msg={message}",
+                "NANOINIT_TEST_LOG_FIELD": "log-env-value",
+            },
+        )
+        self.wait_for_contains(marker, "log-format-env")
+        self.wait_for_contains(log_file, "field=log-env-value missing= msg=supervisor_start() successfully spawned")
+
     def test_log_format_can_be_set_with_config(self):
         marker = self.tmp / "config-log-format.marker"
         log_file = self.tmp / "config-log-format.log"

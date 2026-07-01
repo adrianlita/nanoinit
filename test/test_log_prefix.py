@@ -61,21 +61,21 @@ class LogPrefixTest(NanoInitTestCase):
                     "stderr": str(self.tmp / "prefixed-{device-name}-{app-name}-{timestamp}.err"),
                     "stdout_passthrough": True,
                     "stderr_passthrough": True,
-                    "prefix_logs": "[{device-name}:{app-name}] ",
+                    "prefix_logs": "[{env:NANOINIT_TEST_PREFIX_FIELD}:{device-name}:{app-name}] ",
                 }
             },
         )
 
-        self.start_nanoinit("-c", config, "-v0", env={"DEVICE_NAME": "path-device"})
+        self.start_nanoinit("-c", config, "-v0", env={"DEVICE_NAME": "path-device", "NANOINIT_TEST_PREFIX_FIELD": "prefix-env"})
         self.wait_for(lambda: len(list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.out"))) == 1, "rendered prefixed stdout log")
         self.wait_for(lambda: len(list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.err"))) == 1, "rendered prefixed stderr log")
 
         stdout_logs = list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.out"))
         stderr_logs = list(self.tmp.glob("prefixed-path-device-prefix-placeholder-*.err"))
-        self.assertFileContains(stdout_logs[0], "[path-device:prefix-placeholder] prefixed stdout")
-        self.assertFileContains(stderr_logs[0], "[path-device:prefix-placeholder] prefixed stderr")
-        self.wait_for_contains(self.tmp / "nanoinit.stdout", "[path-device:prefix-placeholder] prefixed stdout")
-        self.wait_for_contains(self.tmp / "nanoinit.stderr", "[path-device:prefix-placeholder] prefixed stderr")
+        self.assertFileContains(stdout_logs[0], "[prefix-env:path-device:prefix-placeholder] prefixed stdout")
+        self.assertFileContains(stderr_logs[0], "[prefix-env:path-device:prefix-placeholder] prefixed stderr")
+        self.wait_for_contains(self.tmp / "nanoinit.stdout", "[prefix-env:path-device:prefix-placeholder] prefixed stdout")
+        self.wait_for_contains(self.tmp / "nanoinit.stderr", "[prefix-env:path-device:prefix-placeholder] prefixed stderr")
 
     def test_prefix_logs_applies_to_default_stdout_across_split_lines(self):
         app = self.write_file(

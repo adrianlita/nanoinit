@@ -340,6 +340,7 @@ Supported placeholders:
   `2026-02-03T11:23:56.123Z`
 - `{app-name}`: `nanoinit` for nanoinit's own logs
 - `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
+- `{env:NAME}`: value of the environment variable `NAME`, or empty when unset
 
 Example:
 
@@ -414,6 +415,7 @@ It supports the same placeholders as `NI_LOG_FORMAT`:
   `2026-02-03T11:23:56.123Z`
 - `{app-name}`: `nanoinit` for nanoinit's own logs
 - `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
+- `{env:NAME}`: value of the environment variable `NAME`, or empty when unset
 
 `NI_LOG_FORMAT` takes precedence when both are configured. The config value is
 applied after the config file is parsed, so parse errors emitted while loading
@@ -491,6 +493,7 @@ Supported placeholders:
   `2026-02-03T11:23:56.123Z`
 - `{app-name}`: the application name from the config object
 - `{device-name}`: value from `DEVICE_NAME`, or the host/container hostname
+- `{env:NAME}`: value of the environment variable `NAME`, or empty when unset
 - `{message}`: empty for prefixes
 
 Example:
@@ -517,10 +520,9 @@ Optional string. Redirects the application's standard output.
 - non-empty string: write `stdout` to that path
 - empty string `""`: redirect `stdout` to `/dev/null`
 
-The path supports the same placeholders as `prefix_logs`: `{timestamp}`,
-`{timestampISO}`, `{app-name}`, `{device-name}`, and `{message}`. The path is
-rendered once when the application is spawned; `{message}` is empty for file
-paths and unknown placeholders are left unchanged.
+The path supports the same placeholders as `prefix_logs`. The path is rendered
+once when the application is spawned; `{message}` is empty for file paths and
+unknown placeholders are left unchanged.
 
 `stdout_passthrough`
 

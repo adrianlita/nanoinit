@@ -50,25 +50,25 @@ class OutputRedirectionTest(NanoInitTestCase):
             {
                 "placeholder-direct": {
                     "path": str(app),
-                    "stdout": str(self.tmp / "direct-{app-name}-{timestamp}.out"),
-                    "stderr": str(self.tmp / "direct-{app-name}-{timestamp}.err"),
+                    "stdout": str(self.tmp / "direct-{env:NANOINIT_TEST_PATH_FIELD}-{app-name}-{timestamp}.out"),
+                    "stderr": str(self.tmp / "direct-{env:NANOINIT_TEST_PATH_FIELD}-{app-name}-{timestamp}.err"),
                 }
             },
         )
 
-        self.start_nanoinit("-c", config, "-v0")
+        self.start_nanoinit("-c", config, "-v0", env={"NANOINIT_TEST_PATH_FIELD": "env-path"})
         self.wait_for_contains(marker, "done")
-        self.wait_for(lambda: len(list(self.tmp.glob("direct-placeholder-direct-*.out"))) == 1, "rendered stdout log")
-        self.wait_for(lambda: len(list(self.tmp.glob("direct-placeholder-direct-*.err"))) == 1, "rendered stderr log")
+        self.wait_for(lambda: len(list(self.tmp.glob("direct-env-path-placeholder-direct-*.out"))) == 1, "rendered stdout log")
+        self.wait_for(lambda: len(list(self.tmp.glob("direct-env-path-placeholder-direct-*.err"))) == 1, "rendered stderr log")
 
-        stdout_logs = list(self.tmp.glob("direct-placeholder-direct-*.out"))
-        stderr_logs = list(self.tmp.glob("direct-placeholder-direct-*.err"))
+        stdout_logs = list(self.tmp.glob("direct-env-path-placeholder-direct-*.out"))
+        stderr_logs = list(self.tmp.glob("direct-env-path-placeholder-direct-*.err"))
         self.assertFileContains(stdout_logs[0], "placeholder stdout")
         self.assertFileContains(stderr_logs[0], "placeholder stderr")
-        self.assertFalse((self.tmp / "direct-{app-name}-{timestamp}.out").exists())
-        self.assertFalse((self.tmp / "direct-{app-name}-{timestamp}.err").exists())
+        self.assertFalse((self.tmp / "direct-{env:NANOINIT_TEST_PATH_FIELD}-{app-name}-{timestamp}.out").exists())
+        self.assertFalse((self.tmp / "direct-{env:NANOINIT_TEST_PATH_FIELD}-{app-name}-{timestamp}.err").exists())
 
-        prefix = "direct-placeholder-direct-"
+        prefix = "direct-env-path-placeholder-direct-"
         stdout_timestamp = stdout_logs[0].name[len(prefix):-len(".out")]
         stderr_timestamp = stderr_logs[0].name[len(prefix):-len(".err")]
         self.assertEqual(stdout_timestamp, stderr_timestamp)
